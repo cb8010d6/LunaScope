@@ -1,0 +1,823 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:,">
+  <title>LunaScope V14 · Unified Agent Workbench</title>
+  <style>
+    @font-face{font-family:"HarmonyOS Sans SC";src:local("HarmonyOS Sans SC"),local("HarmonyOS Sans SC Regular");font-style:normal;font-weight:100 699;font-display:swap}
+    @font-face{font-family:"HarmonyOS Sans SC";src:local("HarmonyOS Sans SC Bold");font-style:normal;font-weight:700 900;font-display:swap}
+    :root{
+      --bg:oklch(96% .0053 106.5);--surface:oklch(100% 0 0);--surface-2:oklch(93.5% .004 106);
+      --fg:oklch(21.3% 0 0);--muted:oklch(54% .006 105);--border:oklch(87.5% .006 106);--border-strong:oklch(61% .008 106);
+      --accent:oklch(95.8% .207 108.3);--cyan:oklch(78% .13 178);--danger:oklch(58% .18 27);--success:oklch(58% .11 151);
+      --shadow:oklch(20% 0 0/.12);--grid:oklch(33% .01 108/.055);--selection:oklch(95.8% .207 108.3/.16);
+      --font-display:"HarmonyOS Sans SC","HarmonyOS Sans",sans-serif;
+      --font-body:"HarmonyOS Sans SC","HarmonyOS Sans",sans-serif;
+      --font-mono:"HarmonyOS Sans SC","HarmonyOS Sans",sans-serif;
+      --header:46px;--sidebar:248px;--status:28px;--tabs:40px;--review:440px;--radius:8px;
+    }
+    [data-theme="dark"]{
+      --bg:oklch(18% .008 106);--surface:oklch(23% .009 106);--surface-2:oklch(27% .008 106);
+      --fg:oklch(92% .004 106);--muted:oklch(69% .008 106);--border:oklch(35% .008 106);--border-strong:oklch(53% .008 106);
+      --shadow:oklch(2% 0 0/.34);--grid:oklch(92% .01 108/.045);--selection:oklch(95.8% .207 108.3/.12);
+    }
+    *{box-sizing:border-box}html,body,#app{height:100%;margin:0;overflow:hidden}body{background:var(--bg);color:var(--fg);font:14px/1.5 var(--font-body);text-rendering:optimizeLegibility;-webkit-font-smoothing:antialiased}
+    button,input,textarea,select{font:inherit;color:inherit}button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.42}h1,h2,h3,h4{font-family:var(--font-display);text-wrap:balance}p{text-wrap:pretty}code,.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}.hidden{display:none!important}
+    :focus-visible{outline:2px solid var(--accent);outline-offset:2px}.app{height:100%;display:grid;grid-template-columns:var(--sidebar) minmax(0,1fr);grid-template-rows:var(--header) minmax(0,1fr) var(--status);transition:grid-template-columns .2s ease}
+    .app.sidebar-collapsed{grid-template-columns:56px minmax(0,1fr)}.app.review-open{grid-template-columns:var(--sidebar) minmax(0,1fr) var(--review)}.app.sidebar-collapsed.review-open{grid-template-columns:56px minmax(0,1fr) var(--review)}
+    .global-header{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;min-width:0;padding:0 12px;border-bottom:1px solid var(--border);background:var(--surface);position:relative;z-index:30}
+    .global-header:before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--accent)}.header-left,.header-right,.row{display:flex;align-items:center;gap:8px;min-width:0}.header-title{display:grid;line-height:1.18;min-width:0}.header-title strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.header-title span{color:var(--muted);font:11px var(--font-mono)}
+    .moon{width:25px;height:25px;border:1px solid var(--border-strong);border-radius:50%;position:relative;background:var(--surface);flex:none}.moon:after{content:"";position:absolute;inset:3px 3px 3px 10px;border-radius:0 50% 50% 0;background:var(--fg)}
+    .icon-btn,.ghost-btn,.text-btn,.primary-btn,.seg-btn{min-height:32px;border:0;background:transparent;border-radius:6px}.icon-btn{min-width:32px;padding:5px 8px}.icon-btn:hover,.ghost-btn:hover,.text-btn:hover{background:var(--surface-2)}.ghost-btn,.text-btn{padding:6px 10px}.primary-btn{padding:6px 13px;background:var(--fg);color:var(--surface);font-weight:650}.primary-btn.signal{background:var(--accent);color:oklch(20% 0 0)}
+    .status{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:12px}.status:before,.dot{content:"";width:7px;height:7px;border-radius:50%;background:var(--border-strong);flex:none}.status.running:before,.dot.running{background:var(--success)}.status.waiting:before,.dot.waiting{background:var(--accent)}.status.failed:before,.dot.failed{background:var(--danger)}.status.complete:before,.dot.complete{background:var(--success)}
+    .sidebar{grid-row:2/4;border-right:1px solid var(--border);background:var(--surface);min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;overflow:hidden;position:relative;z-index:20}.sidebar:after{content:"";position:absolute;inset:0 0 0 auto;width:1px;background:linear-gradient(var(--accent) 0 52px,var(--border) 52px 100%)}
+    .side-top{padding:12px}.new-task{width:100%;height:38px}.project-switch{width:100%;margin-top:10px;padding:8px 10px;text-align:left;border:0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:transparent}.project-switch strong,.project-switch span{display:block}.project-switch span{font:11px var(--font-mono);color:var(--muted)}
+    .side-scroll{overflow:auto;padding:4px 8px}.section-label{margin:12px 8px 6px;color:var(--muted);font:10px var(--font-mono);letter-spacing:.12em}.thread-row{display:grid;grid-template-columns:minmax(0,1fr) 28px;align-items:center;border-radius:6px}.thread,.side-link{width:100%;border:0;background:transparent;text-align:left;display:grid;grid-template-columns:12px minmax(0,1fr) auto;align-items:center;gap:7px;padding:8px;border-radius:6px}.thread-row:hover,.side-link:hover,.thread.active{background:var(--surface-2)}.thread.active{box-shadow:inset 2px 0 var(--accent)}.thread-delete{width:24px;height:24px;border:0;border-radius:5px;background:transparent;color:var(--muted);opacity:0;cursor:pointer}.thread-row:hover .thread-delete,.thread-delete:focus-visible{opacity:1}.thread-delete:hover{background:var(--surface-3);color:var(--danger)}.thread-main{display:grid;min-width:0}.thread-main strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.thread-main small{font:10px var(--font-mono);color:var(--muted)}.attention{width:6px;height:6px;background:var(--accent);transform:rotate(45deg)}.side-bottom{border-top:1px solid var(--border);padding:6px}.side-link{grid-template-columns:18px minmax(0,1fr);min-height:38px}.side-glyph{font:11px var(--font-mono);color:var(--muted)}
+    .sidebar-collapsed .side-top,.sidebar-collapsed .side-scroll{padding-inline:6px}.sidebar-collapsed .project-switch,.sidebar-collapsed .section-label,.sidebar-collapsed .thread-main,.sidebar-collapsed .thread-delete,.sidebar-collapsed .side-link span:last-child,.sidebar-collapsed .new-task span{display:none}.sidebar-collapsed .thread-row{grid-template-columns:1fr}.sidebar-collapsed .thread,.sidebar-collapsed .side-link{grid-template-columns:1fr;place-items:center}.sidebar-collapsed .new-task{font-size:0}.sidebar-collapsed .new-task:after{content:"+";font-size:18px}
+    .workspace{grid-column:2;grid-row:2;min-width:0;min-height:0;display:grid;grid-template-rows:var(--tabs) minmax(0,1fr) auto;overflow:hidden;background:var(--bg)}.workspace.special-view{grid-template-rows:minmax(0,1fr)}.review-open .workspace{grid-column:2}.tabs{display:flex;align-items:flex-end;gap:16px;padding:0 20px;border-bottom:1px solid var(--border);background:var(--surface);overflow-x:auto}.tab{height:100%;border:0;background:transparent;color:var(--muted);padding:0 2px;white-space:nowrap;position:relative}.tab.active{color:var(--fg);font-weight:650}.tab.active:after{content:"";position:absolute;inset:auto 0 0;height:2px;background:var(--fg)}.badge{margin-left:5px;font:10px var(--font-mono);color:var(--muted)}
+    .view{min-height:0;overflow:auto;position:relative}.view.orch-active{overflow:clip}.reader{width:min(820px,calc(100% - 48px));margin:0 auto;padding:30px 0 40px}.message{margin:0 0 28px}.speaker{display:flex;align-items:center;gap:8px;margin-bottom:8px;font:11px var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.06em}.user-message{padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)}.agent-copy{font-size:15px;line-height:1.7}.event{margin:16px 0;border-top:1px solid var(--border);padding-top:14px}.event-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.event-title{display:grid;gap:2px}.event-title strong{font-size:13px}.event-title span{color:var(--muted);font-size:12px}.event-actions{display:flex;gap:6px;flex-wrap:wrap}.event.warning{padding:14px;border:1px solid color-mix(in oklch,var(--accent) 55%,var(--border));background:color-mix(in oklch,var(--accent) 9%,var(--surface));border-radius:var(--radius)}.event.expanded .event-preview{display:block}.event-preview{display:none;margin-top:12px}.compact-list{display:grid;gap:0;border-top:1px solid var(--border)}.compact-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:10px;padding:9px 0;border-bottom:1px solid var(--border);align-items:center}.compact-row>span:nth-child(2){min-width:0;display:grid;gap:2px}.compact-row small{display:block;color:var(--muted)}
+    .composer{padding:10px 20px 14px;background:linear-gradient(transparent,var(--bg) 20%)}.composer-box{width:min(820px,100%);margin:auto;border:1px solid var(--border-strong);background:var(--surface);border-radius:10px;box-shadow:0 10px 28px var(--shadow)}.composer textarea{width:100%;min-height:52px;max-height:180px;resize:none;border:0;background:transparent;padding:13px 14px 4px;outline:0}.composer-foot{display:flex;align-items:center;justify-content:space-between;padding:5px 8px 8px;gap:10px}.composer-permissions{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:11px}.composer-permissions select{width:auto;min-width:112px;padding:4px 7px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--fg);font-size:11px}.native-run-controls{display:flex;align-items:center;gap:6px;padding-left:2px}.bypass-toggle{display:flex;align-items:center;gap:5px;white-space:nowrap}.config-link{color:var(--muted);font-size:12px}
+    .attachment-tray{display:flex;gap:7px;overflow-x:auto;padding:9px 10px 2px;scrollbar-width:thin}.attachment-chip{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:7px;min-width:190px;max-width:300px;padding:7px 8px;border:1px solid var(--border);border-radius:7px;background:var(--bg)}.attachment-kind{padding:3px 5px;border-radius:4px;background:var(--accent-soft);color:var(--accent);font-size:9px;font-weight:700}.attachment-copy{display:flex;min-width:0;flex-direction:column}.attachment-copy strong,.attachment-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.attachment-copy strong{font-size:11px}.attachment-copy small{color:var(--muted);font-size:9px}.attachment-warning{color:var(--warn);font-weight:800}.attachment-remove{width:22px;height:22px;border:0;border-radius:4px;background:transparent;color:var(--muted);font-size:16px;cursor:pointer}.attachment-remove:hover{background:var(--surface-2);color:var(--danger)}
+    .review{grid-column:3;grid-row:2/4;background:var(--surface);border-left:1px solid var(--border);min-width:0;min-height:0;display:none;grid-template-rows:auto auto minmax(0,1fr)}.review-open .review{display:grid}.review-head{height:46px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 12px}.review-tabs{display:flex;gap:12px;padding:0 12px;border-bottom:1px solid var(--border);overflow:auto}.review-tabs button{height:38px;border:0;background:transparent;color:var(--muted);white-space:nowrap}.review-tabs button.active{color:var(--fg);box-shadow:inset 0 -2px var(--fg)}.review-body{overflow:auto;padding:16px}.inspect-section{margin:0 0 22px}.inspect-section h3{margin:0 0 10px;font-size:12px;letter-spacing:.04em}.definition{margin:0}.definition div{display:grid;grid-template-columns:118px minmax(0,1fr);gap:12px;padding:9px 0;border-bottom:1px solid var(--border)}.definition dt{color:var(--muted)}.definition dd{margin:0;overflow-wrap:anywhere}.provenance{display:inline-flex;align-items:center;gap:5px;color:var(--muted);font:10px var(--font-mono)}.provenance.user:before{content:"";width:3px;height:12px;background:var(--accent)}
+    .statusbar{grid-column:2/-1;grid-row:3;display:flex;align-items:center;gap:10px;padding:0 10px;border-top:1px solid var(--border);background:var(--surface);font:11px var(--font-mono);color:var(--muted);z-index:24}.statusbar .spacer{flex:1}.console-panel{position:fixed;z-index:45;left:var(--sidebar);right:0;bottom:var(--status);height:min(340px,42vh);background:var(--surface);border-top:1px solid var(--border-strong);display:none;grid-template-rows:38px 1fr;box-shadow:0 -12px 30px var(--shadow)}.console-open .console-panel{display:grid}.console-head{display:flex;align-items:center;justify-content:space-between;padding:0 10px;border-bottom:1px solid var(--border)}.console-panel pre{margin:0;padding:14px;overflow:auto;font:12px/1.6 var(--font-mono);color:var(--muted)}
+    .workspace-grid{height:100%;display:grid;grid-template-columns:minmax(220px,280px) minmax(0,1fr)}.pane-list{border-right:1px solid var(--border);overflow:auto;background:var(--surface)}.pane-main{overflow:auto}.list-head,.pane-head{min-height:50px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border)}.list-item{width:100%;border:0;border-bottom:1px solid var(--border);background:transparent;text-align:left;padding:11px 14px}.list-item:hover,.list-item.active{background:var(--surface-2)}.list-item strong,.list-item span{display:block}.list-item span{font-size:12px;color:var(--muted)}
+    .table{width:100%;border-collapse:collapse}.table th,.table td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}.table th{font:10px var(--font-mono);color:var(--muted);letter-spacing:.06em}.diff{font:12px/1.65 var(--font-mono);padding:16px;margin:0;white-space:pre-wrap}.diff .add{background:color-mix(in oklch,var(--success) 12%,transparent)}.diff .del{background:color-mix(in oklch,var(--danger) 10%,transparent)}
+    .orch{position:absolute;inset:0;display:grid;grid-template-rows:44px minmax(0,1fr);background:var(--bg)}.orch-toolbar{display:flex;align-items:center;gap:8px;padding:0 10px;border-bottom:1px solid var(--border);background:var(--surface);z-index:10}.segments{display:flex;background:var(--surface-2);padding:2px;border-radius:7px}.seg-btn{padding:4px 10px;color:var(--muted)}.seg-btn.active{background:var(--surface);color:var(--fg);box-shadow:0 1px 3px var(--shadow)}.orch-stage{position:relative;min-height:0;overflow:hidden}.canvas{position:absolute;inset:0;overflow:hidden;touch-action:none;background-color:var(--bg);background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:24px 24px}.graph-plane{position:absolute;left:0;top:0;width:1500px;height:760px;transform-origin:0 0}.edge-svg{position:absolute;inset:0;width:1500px;height:760px;overflow:visible;z-index:2;pointer-events:none}.edge{fill:none;stroke:var(--border-strong);stroke-width:1.6;vector-effect:non-scaling-stroke}.edge.active{stroke:var(--cyan);stroke-width:2}.edge.selected{stroke:var(--accent);stroke-width:2.4}.edge.approval{stroke-dasharray:4 4}.edge.fallback{stroke-dasharray:2 5}.edge-hit{fill:none;stroke:transparent;stroke-width:15;pointer-events:stroke;cursor:pointer;vector-effect:non-scaling-stroke}.phase{position:absolute;border:1px solid var(--border);background:color-mix(in oklch,var(--surface) 58%,transparent);z-index:1;pointer-events:none}.phase-label{position:absolute;top:8px;left:10px;font:10px var(--font-mono);color:var(--muted);letter-spacing:.08em}.node{position:absolute;width:232px;min-height:124px;background:var(--surface);border:1px solid var(--border-strong);z-index:3;box-shadow:0 5px 15px var(--shadow);user-select:none}.node.selected{outline:2px solid var(--accent);outline-offset:2px}.node.orchestrator{width:260px;background:var(--fg);color:var(--surface);border-color:var(--fg)}.node.orchestrator:before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--accent)}.node.running:after{content:"";position:absolute;inset:auto 0 0;height:2px;background:var(--cyan);transform-origin:left;animation:workline 2.2s linear infinite}.node-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:10px 11px 8px;border-bottom:1px solid color-mix(in oklch,var(--border) 80%,transparent)}.node-id{font:10px var(--font-mono);letter-spacing:.06em}.node-role{font-weight:680}.node-status{font-size:10px;color:var(--muted);white-space:nowrap}.orchestrator .node-status{color:color-mix(in oklch,var(--surface) 70%,transparent)}.node-body{padding:9px 11px;color:var(--muted);font-size:12px;min-height:47px}.orchestrator .node-body{color:color-mix(in oklch,var(--surface) 74%,transparent)}.node-output{margin-top:5px;font:10px var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.node-foot{display:flex;justify-content:space-between;gap:8px;padding:6px 11px;border-top:1px solid color-mix(in oklch,var(--border) 80%,transparent);font:10px var(--font-mono);color:var(--muted)}.socket{appearance:none;-webkit-appearance:none;position:absolute;top:50%;width:11px;height:11px;min-width:0;min-height:0;padding:0;margin:0;border:1px solid var(--border-strong);border-radius:50%;background:var(--surface);box-shadow:none;z-index:5}.socket:before{content:"";position:absolute;inset:-9px;border-radius:50%}.socket.input{left:-6px}.socket.output{right:-6px}.socket:hover,.socket.connecting{border-color:var(--cyan);box-shadow:0 0 0 3px color-mix(in oklch,var(--cyan) 20%,transparent)}.minimap{position:absolute;right:12px;bottom:12px;width:150px;height:92px;border:1px solid var(--border);background:color-mix(in oklch,var(--surface) 92%,transparent);z-index:8}.minimap i{position:absolute;width:16px;height:8px;background:var(--border-strong)}
+    .reroute{appearance:none;position:absolute;width:10px;height:10px;padding:0;border:1px solid var(--border-strong);background:var(--surface);transform:translate(-50%,-50%) rotate(45deg);z-index:5}.reroute.selected{border-color:var(--accent);background:var(--accent)}.patchbar{position:absolute;left:12px;right:178px;bottom:12px;min-height:42px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 9px;background:var(--surface);border:1px solid var(--border-strong);box-shadow:0 8px 18px var(--shadow);z-index:9}.queue{padding:16px;overflow:auto;height:100%}.queue-columns{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:12px}.queue-col{border-top:2px solid var(--border-strong)}.queue-card{padding:10px 0;border-bottom:1px solid var(--border)}
+    dialog{border:0;padding:0;background:transparent;color:inherit;max-width:none}dialog::backdrop{background:oklch(10% 0 0/.42);backdrop-filter:blur(2px)}.dialog{width:min(760px,calc(100vw - 32px));max-height:min(760px,calc(100dvh - 32px));display:grid;grid-template-rows:auto minmax(0,1fr) auto;background:var(--surface);border:1px solid var(--border-strong);box-shadow:0 25px 80px var(--shadow)}.dialog.wide{width:min(1020px,calc(100vw - 32px))}.dialog-head,.dialog-foot{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--border)}.dialog-foot{border-bottom:0;border-top:1px solid var(--border)}.dialog-body{overflow:auto;padding:16px}.field{display:grid;gap:5px;margin-bottom:14px}.field label{font-size:12px;color:var(--muted)}.input,.textarea,.select{width:100%;border:1px solid var(--border);background:var(--bg);padding:8px 10px;border-radius:6px}.node .socket.input,.node .socket.output{width:11px;height:11px;padding:0;border-radius:50%;background:var(--surface)}.textarea{min-height:140px;resize:vertical;font:12px/1.6 var(--font-mono)}.prompt-studio{display:grid;grid-template-columns:170px minmax(0,1fr);min-height:520px}.prompt-sections{border-right:1px solid var(--border);padding-right:12px}.prompt-editor{padding-left:16px}.prompt-editor textarea{min-height:430px}.toast{position:fixed;right:18px;bottom:42px;z-index:90;max-width:360px;padding:10px 12px;background:var(--fg);color:var(--surface);border-radius:6px;box-shadow:0 10px 28px var(--shadow);opacity:0;transform:translateY(8px);pointer-events:none;transition:.18s}.toast.show{opacity:1;transform:none}
+    .mobile-nav{display:none}.settings-layout{display:grid;grid-template-columns:220px minmax(0,760px);gap:32px;padding:22px}.settings-menu{display:grid;align-content:start}.settings-menu button{border:0;background:transparent;text-align:left;padding:8px 10px}.settings-menu button.active{background:var(--surface-2)}.setting-row{display:grid;grid-template-columns:minmax(0,1fr) max-content;gap:24px;align-items:center;padding:14px 0;border-bottom:1px solid var(--border)}.setting-row span{display:block;color:var(--muted);font-size:12px}.settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.settings-grid .wide{grid-column:1/-1}.provider-card{border:1px solid var(--border);background:var(--surface);padding:12px;margin:10px 0}.provider-card header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.provider-card small,.settings-help{display:block;color:var(--muted);font-size:12px;line-height:1.5}.settings-status{min-height:20px;margin:8px 0;font:11px var(--font-mono);color:var(--muted)}.settings-status.error{color:var(--red)}.settings-status.success{color:var(--green)}.routing-review{white-space:pre-wrap;padding:10px;background:var(--surface-2);border-left:2px solid var(--accent);font:11px/1.55 var(--font-mono)}.model-pool{display:grid;gap:6px;margin:0 0 12px}.model-pool-row{display:grid;grid-template-columns:130px minmax(0,1fr) minmax(0,1fr) 90px 54px;gap:6px;align-items:center}.model-pool-row strong{font-size:11px}.model-pool-row .input,.model-pool-row .select{padding:6px 7px;font-size:11px}.model-pool-row label{font-size:11px;white-space:nowrap}
+    @keyframes workline{0%{transform:scaleX(.12);opacity:.4}60%{transform:scaleX(.72);opacity:1}100%{transform:scaleX(1);opacity:.25}}
+    @media(max-width:1279px){:root{--sidebar:56px}.app.review-open{grid-template-columns:56px minmax(0,1fr)}.review{position:fixed;right:0;top:var(--header);bottom:var(--status);width:min(var(--review),92vw);z-index:40;box-shadow:-14px 0 32px var(--shadow)}.sidebar .project-switch,.sidebar .section-label,.sidebar .thread-main,.sidebar .thread-delete,.sidebar .side-link span:last-child,.sidebar .new-task span{display:none}.sidebar .thread-row{grid-template-columns:1fr}.sidebar .thread,.sidebar .side-link{grid-template-columns:1fr;place-items:center}.sidebar .new-task{font-size:0}.sidebar .new-task:after{content:"+";font-size:18px}.console-panel{left:56px}}
+    @media(max-width:767px){.app{grid-template-columns:1fr;grid-template-rows:44px minmax(0,1fr) 58px}.global-header{grid-column:1;grid-row:1}.sidebar{display:none}.workspace{grid-column:1;grid-row:2;grid-template-rows:var(--tabs) minmax(0,1fr) auto}.header-meta,.header-right .text-btn{display:none}.tabs{padding:0 12px;gap:14px}.reader{width:calc(100% - 28px);padding-top:20px}.composer{padding:8px 10px}.composer .icon-btn:nth-child(n+2),.config-link{display:none}.statusbar{display:none}.mobile-nav{grid-column:1;grid-row:3;display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--border);background:var(--surface);z-index:30}.mobile-nav button{border:0;background:transparent;font-size:11px}.mobile-nav button.active{box-shadow:inset 0 2px var(--accent)}.workspace-grid{grid-template-columns:1fr}.pane-list{border:0}.pane-main{display:none}.pane-main.mobile-open{display:block;position:absolute;inset:0;background:var(--bg);z-index:5}.orch-toolbar{overflow-x:auto}.orch-toolbar .text-btn{white-space:nowrap}.minimap{display:none}.patchbar{right:12px}.queue-columns{grid-template-columns:1fr}.settings-layout{grid-template-columns:1fr;padding:14px}.settings-menu{display:flex;overflow-x:auto}.settings-grid{grid-template-columns:1fr}.settings-grid .wide{grid-column:auto}.model-pool-row{grid-template-columns:1fr 1fr}.model-pool-row strong{grid-column:1/-1}.setting-row{grid-template-columns:1fr;gap:8px}.review{top:20%;bottom:0;width:100%;border-radius:14px 14px 0 0}.console-panel{left:0;bottom:58px}.prompt-studio{grid-template-columns:1fr}.prompt-sections{display:none}.prompt-editor{padding:0}.definition div{grid-template-columns:1fr;gap:3px}.dialog.wide{width:calc(100vw - 16px)}}
+    .markdown-body{overflow-wrap:anywhere}.markdown-body>:first-child{margin-top:0}.markdown-body>:last-child{margin-bottom:0}.markdown-body p,.markdown-body ul,.markdown-body ol,.markdown-body blockquote,.markdown-body pre{margin:0 0 12px}.markdown-body h1,.markdown-body h2,.markdown-body h3,.markdown-body h4,.markdown-body h5,.markdown-body h6{margin:18px 0 8px;line-height:1.3}.markdown-body h1{font-size:1.45em}.markdown-body h2{font-size:1.28em}.markdown-body h3{font-size:1.14em}.markdown-body ul,.markdown-body ol{padding-left:24px}.markdown-body li+li{margin-top:4px}.markdown-body blockquote{padding:4px 0 4px 14px;border-left:3px solid var(--border-strong);color:var(--muted)}.markdown-body pre{max-width:100%;overflow:auto;padding:12px 14px;border:1px solid var(--border);background:var(--surface-2);font:12px/1.6 var(--font-mono)}.markdown-body code{padding:.12em .34em;background:var(--surface-2);font:12px/1.5 var(--font-mono)}.markdown-body pre code{padding:0;background:transparent}.markdown-body a{color:var(--accent-strong);text-decoration:underline;text-underline-offset:2px}.markdown-body hr{margin:16px 0;border:0;border-top:1px solid var(--border)}
+    .agent-stream{padding:14px 16px;border:1px solid var(--border);background:var(--surface);border-radius:var(--radius)}.agent-stream-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}.agent-stream-head strong{font-size:13px}.agent-stream-head span{font:10px var(--font-mono);color:var(--muted);text-transform:uppercase}.stream-trace{margin-top:10px;border-top:1px solid var(--border);padding-top:8px}.stream-trace summary{cursor:pointer;color:var(--muted);font:11px var(--font-mono)}.stream-trace ol{display:grid;gap:6px;margin:8px 0 0;padding:0;list-style:none}.stream-trace li{display:grid;grid-template-columns:46px minmax(0,1fr);gap:10px;align-items:start;font-size:12px}.stream-trace time{color:var(--muted);font:10px var(--font-mono)}.retry-actions{align-items:center;margin-top:12px}.retry-actions>span{margin-right:auto;font-size:12px;color:var(--muted)}
+    .changes-summary{display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface)}.changes-summary strong{font:12px var(--font-mono)}.diff-file{margin:0;border-bottom:1px solid var(--border);background:var(--surface)}.diff-file>summary{display:grid;grid-template-columns:minmax(0,1fr) max-content max-content;align-items:center;gap:12px;min-height:44px;padding:0 14px;cursor:pointer;list-style:none}.diff-file>summary::-webkit-details-marker{display:none}.diff-file>summary:hover{background:var(--surface-2)}.diff-path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px var(--font-mono)}.diff-stat{font:11px var(--font-mono)}.diff-stat .add{color:var(--success)}.diff-stat .del{color:var(--danger)}.diff-kind{font:10px var(--font-mono);color:var(--muted);text-transform:uppercase}.diff-code{overflow:auto;border-top:1px solid var(--border);font:11px/1.55 var(--font-mono)}.diff-hunk-head{position:sticky;left:0;padding:5px 12px;background:color-mix(in oklch,var(--cyan) 9%,var(--surface));color:var(--muted);white-space:pre}.diff-line{display:grid;grid-template-columns:48px 48px minmax(max-content,1fr);min-height:20px}.diff-line>span{padding:1px 8px;border-right:1px solid var(--border);color:var(--muted);text-align:right;user-select:none}.diff-line>code{display:block;padding:1px 10px;background:transparent;white-space:pre}.diff-line.addition{background:color-mix(in oklch,var(--success) 10%,var(--surface))}.diff-line.deletion{background:color-mix(in oklch,var(--danger) 9%,var(--surface))}.diff-line.metadata{color:var(--muted)}
+    .plan-sheet{border:1px solid var(--border);background:var(--surface)}.plan-sheet>header{padding:14px 16px;border-bottom:1px solid var(--border)}.plan-sheet>header p{margin:5px 0 0;color:var(--muted);font-size:12px}.plan-table-wrap{overflow:auto}.plan-table{width:100%;border-collapse:collapse;font-size:12px}.plan-table th{padding:8px 10px;text-align:left;color:var(--muted);font:10px var(--font-mono);text-transform:uppercase;border-bottom:1px solid var(--border)}.plan-table td{padding:10px;border-bottom:1px solid var(--border);vertical-align:top}.plan-table tr:last-child td{border-bottom:0}.plan-table td:nth-child(3) span,.plan-table td:nth-child(3) small{display:block}.plan-table td:nth-child(3) small{margin-top:2px;color:var(--muted);font:10px var(--font-mono)}.plan-mark{width:18px;text-align:center;color:var(--muted);font:12px var(--font-mono)}.plan-active .plan-mark{color:var(--cyan)}.plan-complete .plan-mark{color:var(--success)}.plan-complete td:nth-child(2){color:var(--muted)}.plan-failed .plan-mark{color:var(--danger)}.reasoning-summary{margin:8px 0;border-left:2px solid var(--border);padding:0 0 0 12px}.reasoning-summary>summary{display:flex;justify-content:space-between;gap:12px;cursor:pointer;color:var(--muted);font:11px var(--font-mono);list-style:none}.reasoning-summary>summary::-webkit-details-marker{display:none}.reasoning-summary .agent-copy{padding:7px 0 2px;color:var(--text-2);font-size:12px}.commentary-message{border-left:2px solid var(--cyan);padding-left:14px}.commentary-message .speaker{color:var(--cyan)}.tool-activity{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:start;padding:8px 10px;border:1px solid var(--border);background:var(--surface);font-size:12px}.tool-activity .tool-icon{color:var(--muted);font:11px var(--font-mono)}.tool-activity strong{display:block;font-size:12px}.tool-activity p{margin:2px 0 0;color:var(--muted)}.tool-activity .tool-state{font:10px var(--font-mono);color:var(--muted);text-transform:uppercase}.tool-activity.failed{border-color:color-mix(in srgb,var(--danger) 45%,var(--border))}.tool-activity.failed .tool-state{color:var(--danger)}
+    @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+    /* V14 — unified control primitives and semantic runtime events */
+    .control-reset,
+    .interactive-row,
+    .worker-activity-row,
+    .artifact-row-v14,
+    .trace-row,
+    .history-row-v14 {
+      -webkit-appearance:none;appearance:none;width:100%;min-width:0;margin:0;padding:0;
+      border:0;border-radius:0;background:transparent;color:inherit;font:inherit;text-align:left;
+      box-shadow:none;
+    }
+    .control-reset:focus-visible,.interactive-row:focus-visible,.worker-activity-row:focus-visible,
+    .artifact-row-v14:focus-visible,.trace-row:focus-visible,.history-row-v14:focus-visible{
+      outline:2px solid var(--accent);outline-offset:-2px;
+    }
+    .thread,.side-link,.list-item,.queue-card,.handoff-row,.nav-row{appearance:none;-webkit-appearance:none;box-shadow:none;font:inherit}
+    .list-item.control-reset{display:grid;gap:3px;padding:10px 12px;border-bottom:1px solid var(--border)}
+    .list-item.control-reset:hover{background:var(--surface-2)}
+    .runtime-stack{display:grid;gap:22px;margin-top:24px}
+    .runtime-event{position:relative;border-top:1px solid var(--border);padding:16px 0 0}
+    .runtime-event:first-child{border-top:0;padding-top:0}
+    .runtime-event.interrupt{padding:14px;border:1px solid color-mix(in oklch,var(--accent) 52%,var(--border));background:color-mix(in oklch,var(--accent) 7%,var(--surface));border-radius:8px}
+    .runtime-event.error{border-color:color-mix(in oklch,var(--danger) 48%,var(--border));background:color-mix(in oklch,var(--danger) 6%,var(--surface))}
+    .runtime-event-header{min-height:32px;display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+    .runtime-event-kicker{display:flex;align-items:center;gap:8px;font:10px var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+    .runtime-event-title{margin:3px 0 0;font-size:14px;line-height:1.4;font-weight:700}
+    .runtime-event-summary{margin-top:4px;color:var(--muted);font-size:12px;line-height:1.55}
+    .runtime-event-content{margin-top:12px}
+    .runtime-event-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:12px}
+    .status-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:32px}
+    .runtime-event[data-od-id="plan-runtime-event"] .runtime-event-actions{position:absolute;right:0;top:12px;margin:0}
+    .runtime-event[data-od-id="plan-runtime-event"] .runtime-event-content{margin-top:8px}
+    .event-state{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font:11px var(--font-mono);color:var(--muted)}
+    .event-state:before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+    .event-state.running{color:var(--cyan)}.event-state.needs-attention{color:var(--accent)}
+    .event-state.failed{color:var(--danger)}.event-state.complete{color:var(--success)}
+    .execution-lens{display:grid;border:1px solid var(--border);background:var(--surface);margin:0 0 24px}
+    .execution-lens-toggle{min-height:42px;display:grid;grid-template-columns:max-content minmax(0,1fr) max-content;align-items:center;gap:16px;padding:0 12px}
+    .lens-identity{font:11px var(--font-mono);font-weight:700;letter-spacing:.05em}
+    .lens-summary{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px}
+    .lens-controls{display:flex;align-items:center;gap:6px}
+    .lens-detail{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;border-top:1px solid var(--border)}
+    .lens-metric{padding:12px;border-inline-end:1px solid var(--border)}.lens-metric:last-child{border:0}
+    .lens-metric span{display:block;font:10px var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+    .lens-metric strong{display:block;margin-top:4px;font-size:12px;line-height:1.4}
+    .worker-list{border-top:1px solid var(--border)}
+    .worker-activity-row{position:relative;min-height:62px;display:grid;grid-template-columns:3px minmax(154px,190px) minmax(0,1fr) minmax(92px,max-content);column-gap:14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)}
+    .worker-activity-row:hover{background:color-mix(in oklch,var(--surface-2) 64%,transparent)}
+    .worker-state-rail{align-self:stretch;width:3px;background:var(--border-strong)}
+    .worker-activity-row[data-status="running"] .worker-state-rail{background:var(--cyan)}
+    .worker-activity-row[data-status="waiting-approval"] .worker-state-rail{background:var(--accent)}
+    .worker-activity-row[data-status="failed"] .worker-state-rail{background:var(--danger)}
+    .worker-activity-row[data-status="complete"] .worker-state-rail{background:var(--success);opacity:.6}
+    .worker-identity,.worker-current,.worker-runtime{min-width:0;display:grid;gap:3px}
+    .worker-id{font:10px var(--font-mono);letter-spacing:.05em;color:var(--muted)}
+    .worker-role{font-size:13px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .worker-task{font-size:12px;line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .worker-action{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .worker-runtime{justify-items:end}.runtime-status{font:11px var(--font-mono)}.runtime-progress{font-size:10px;color:var(--muted)}
+    .completed-group{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:40px;border-bottom:1px solid var(--border);color:var(--muted);font-size:12px}
+    .interrupt-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--border);margin-top:12px}
+    .interrupt-fact{padding:10px;background:var(--surface)}.interrupt-fact span{display:block;font:10px var(--font-mono);color:var(--muted);text-transform:uppercase}.interrupt-fact strong{display:block;margin-top:3px;font-size:12px}
+    .artifact-evidence,.artifact-row-v14{display:grid;grid-template-columns:minmax(0,1fr) max-content;align-items:center;gap:18px;padding:12px 0;border-bottom:1px solid var(--border)}
+    .artifact-row-v14:hover{background:var(--surface-2)}
+    .artifact-evidence-main{min-width:0;display:grid;gap:4px}.artifact-evidence-name{font:12px var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.artifact-evidence-meta{font-size:11px;color:var(--muted)}
+    .evidence-list{display:flex;gap:12px;flex-wrap:wrap;color:var(--muted);font-size:11px}.evidence-pass:before{content:"✓";color:var(--success);margin-right:5px}
+    .contextual-actions{position:sticky;top:-14px;z-index:3;display:flex;gap:6px;padding:10px 0;background:var(--surface);border-bottom:1px solid var(--border);margin-bottom:12px}
+    .trace-tree{border-left:1px solid var(--border);margin-left:6px}.trace-row{display:grid;grid-template-columns:16px minmax(0,1fr) max-content;gap:9px;padding:8px 0 8px 12px}.trace-row:hover{background:var(--surface-2)}
+    .trace-type{font:10px var(--font-mono);color:var(--muted)}.trace-duration{font:10px var(--font-mono);color:var(--muted)}
+    .context-row{display:grid;grid-template-columns:minmax(0,1fr) max-content;align-items:center;gap:12px;min-height:54px;padding:9px 0;border-bottom:1px solid var(--border)}
+    .item-main{min-width:0;display:grid;gap:4px}.item-title{display:block;min-width:0;line-height:1.35;overflow-wrap:anywhere}.item-description{display:block;color:var(--muted);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+    .run-history-list{border-top:1px solid var(--border)}.history-row-v14{display:grid;grid-template-columns:70px 12px minmax(0,1fr) max-content;gap:10px;align-items:center;min-height:46px;border-bottom:1px solid var(--border)}
+    .mobile-only{display:none}
+    .history-marker{width:7px;height:7px;border-radius:50%;background:var(--border-strong)}.history-row-v14.current .history-marker{background:var(--accent)}
+    .run-attention{color:var(--accent)}
+    .composer-attachments{display:flex;gap:6px;flex-wrap:wrap;padding:8px 10px 0}.attachment-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 7px;border:1px solid var(--border);font:10px var(--font-mono);color:var(--muted);background:var(--surface-2)}
+    .ultranote-shell{width:min(1440px,100%);margin:0 auto;padding:24px;display:grid;gap:16px}.ultranote-header{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding-bottom:18px;border-bottom:1px solid var(--border)}.ultranote-header h2{margin:3px 0 5px;font-size:25px}.ultranote-header p{margin:0;color:var(--muted)}.ultranote-kicker{font:10px var(--font-mono);letter-spacing:.13em;color:var(--accent)}.ultranote-onboarding{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}.ultranote-course-row{text-align:left;width:100%}.ultranote-grid{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:16px;align-items:start}.ultranote-main,.ultranote-rail{display:grid;gap:14px}.ultranote-alert{display:grid;gap:5px;margin-top:12px;padding:10px;border-left:3px solid var(--orange);background:color-mix(in oklab,var(--orange) 8%,transparent)}.ultranote-alert span,.ultranote-plan span,.ultranote-policy-result span{display:block;color:var(--muted);font-size:12px;line-height:1.45}.ultranote-plan{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}.ultranote-plan>div{padding:10px;background:var(--surface-2);border:1px solid var(--border)}.ultranote-note-row{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--border)}.ultranote-note-row:last-child{border-bottom:0}.ultranote-note-row div:first-child{display:grid;gap:3px}.ultranote-note-row span,.ultranote-empty,.ultranote-rail small{color:var(--muted);font-size:12px}.ultranote-metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}.ultranote-metrics span{display:grid;padding:9px;background:var(--surface-2);color:var(--muted);font-size:11px}.ultranote-metrics b{font:18px var(--font-display);color:var(--fg)}.ultranote-policy-result{display:grid;gap:4px;margin-top:10px;padding:9px;border:1px solid var(--border)}.ultranote-policy-result.waiting{border-left:3px solid var(--orange)}.ultranote-policy-result.complete{border-left:3px solid var(--green)}.ultranote-search-results{display:grid;gap:5px}.ultranote-search-hit{display:grid;gap:3px;padding:8px;border:1px solid var(--border);background:var(--surface-2)}.ultranote-search-hit span{font-size:11px;color:var(--muted)}
+    .project-manager{display:grid;grid-template-columns:260px minmax(0,1fr);gap:18px;min-height:470px}.project-list{padding-right:14px;border-right:1px solid var(--border);overflow:auto}.project-editor{min-width:0}.project-folder-list{display:grid;gap:7px}.project-folder-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:9px;border:1px solid var(--border);background:var(--surface-2)}.project-folder-row>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:11px var(--font-mono)}.slash-menu{display:grid;padding:6px;border-bottom:1px solid var(--border);background:var(--surface-2)}.slash-menu button{display:grid;grid-template-columns:115px minmax(0,1fr);gap:8px;text-align:left;border:0;background:transparent;padding:7px 8px}.slash-menu button:hover,.slash-menu button:focus-visible{background:var(--surface)}.slash-menu span{color:var(--muted);font-size:12px}
+    .node.running:after{animation:none!important;transform:scaleX(.64);transition:transform .24s ease;background:var(--cyan)}
+    .run-paused .node.running:after{transform:scaleX(.46);background:var(--accent)}
+    @media(max-width:900px){.worker-activity-row{grid-template-columns:3px minmax(120px,160px) minmax(0,1fr)}.worker-runtime{grid-column:2/-1;grid-row:2;justify-items:start;display:flex;gap:8px}.lens-detail{grid-template-columns:repeat(2,minmax(0,1fr))}.interrupt-grid{grid-template-columns:1fr}}
+    @media(max-width:767px){.mobile-only{display:inline-flex}}
+    @media(max-width:600px){.runtime-stack{gap:18px}.runtime-event-header{display:grid}.worker-activity-row{grid-template-columns:3px minmax(0,1fr);column-gap:10px}.worker-current,.worker-runtime{grid-column:2}.worker-runtime{grid-row:auto}.execution-lens-toggle{grid-template-columns:max-content minmax(0,1fr)}.lens-controls{grid-column:1/-1;justify-content:flex-end;border-top:1px solid var(--border);padding-top:7px}.lens-detail{grid-template-columns:1fr}.lens-metric{border-inline-end:0;border-bottom:1px solid var(--border)}}
+    .native-orch-toolbar{min-width:0}.native-orch-toolbar .text-btn{white-space:nowrap}
+    .native-orch-stage{background:var(--bg)}
+    .native-orch-stage #nativeOrchestrationPlan{position:absolute;inset:0}
+    .native-orch-stage .native-graph-shell{height:100%;margin:0;border:0;box-shadow:none}
+    .native-orch-stage .native-graph-scroll{height:100%;max-height:none}
+    .native-orch-empty{position:absolute;left:72px;top:64px;width:min(380px,calc(100% - 96px));padding:16px;border:1px solid var(--border);background:var(--surface)}
+    .native-orchestration-scroll{position:absolute;inset:0;overflow:auto;background-color:var(--bg);background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:24px 24px}
+    .native-orchestration-content{width:min(1220px,calc(100% - 32px));margin:0 auto;padding:18px 0 72px}
+    .native-orchestration-title{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:2px 0 12px}.native-orchestration-title>div{display:grid;gap:3px}
+    .native-blueprint-intake{box-shadow:0 10px 28px var(--shadow)}
+    .native-runtime-list{border-top:1px solid var(--border)}.native-runtime-row{display:grid;width:100%;grid-template-columns:3px minmax(180px,260px) minmax(0,1fr);align-items:center;gap:12px;padding:12px 0;border:0;border-bottom:1px solid var(--border);background:transparent;text-align:left}.native-runtime-row:hover{background:var(--surface-2)}.native-runtime-row>span:nth-child(2){display:grid;gap:3px}.native-runtime-row small{color:var(--muted)}
+    .native-graph-shell{position:relative;margin:12px 0;border:1px solid var(--border);background:var(--surface-2);box-shadow:0 8px 24px var(--shadow)}
+    .native-graph-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 11px;border-bottom:1px solid var(--border);background:var(--surface)}
+    .native-graph-scroll{position:relative;overflow:auto;max-height:540px;min-height:360px;background-color:var(--bg);background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:24px 24px}
+    .native-graph-plane{position:relative;min-width:100%;min-height:300px}
+    .native-graph-phase{position:absolute;border:1px solid var(--border);background:color-mix(in oklch,var(--surface) 58%,transparent);z-index:0;pointer-events:none}.native-graph-phase>span{position:absolute;top:8px;left:10px;font:10px var(--font-mono);color:var(--muted);letter-spacing:.08em}
+    .native-graph-plane svg{position:absolute;inset:0;overflow:visible;pointer-events:none}
+    .native-graph-edge{fill:none;stroke:var(--border-strong);stroke-width:1.6;vector-effect:non-scaling-stroke}
+    .native-graph-edge.synthesis{stroke:var(--accent);stroke-dasharray:4 4}
+    .native-graph-node{position:absolute;display:flex;flex-direction:column;width:216px;min-height:124px;padding:0;border:1px solid var(--border-strong);background:var(--surface);color:var(--fg);box-shadow:0 5px 15px var(--shadow);text-align:left;cursor:pointer;z-index:3}
+    .native-graph-node:hover,.native-graph-node:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+    .native-graph-node.orchestrator{background:var(--fg);color:var(--surface);border-color:var(--fg)}.native-graph-node.orchestrator:before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--accent)}
+    .native-graph-node.synthesis{border-color:var(--accent)}
+    @keyframes native-agent-glow{0%,100%{box-shadow:0 5px 15px var(--shadow),0 0 0 1px color-mix(in oklch,var(--cyan) 45%,transparent),0 0 14px color-mix(in oklch,var(--cyan) 22%,transparent)}50%{box-shadow:0 6px 18px var(--shadow),0 0 0 2px color-mix(in oklch,var(--cyan) 72%,transparent),0 0 28px color-mix(in oklch,var(--cyan) 42%,transparent)}}
+    .native-graph-node.is-running{border-color:var(--cyan);animation:native-agent-glow 1.8s ease-in-out infinite}
+    .native-graph-node-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:9px 10px 7px;border-bottom:1px solid color-mix(in oklch,var(--border) 80%,transparent)}
+    .native-graph-node-id{display:block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:9px var(--font-mono);letter-spacing:.05em;color:var(--muted)}
+    .orchestrator .native-graph-node-id{color:color-mix(in oklch,var(--surface) 70%,transparent)}
+    .native-graph-node-role{display:block;margin-top:2px;font-weight:680;overflow-wrap:anywhere}
+    .native-graph-node-body{display:block;flex:1;padding:8px 10px;color:var(--muted);font-size:11px;line-height:1.45}
+    .orchestrator .native-graph-node-body{color:color-mix(in oklch,var(--surface) 76%,transparent)}
+    .native-graph-node-foot{display:flex;justify-content:space-between;gap:8px;padding:6px 10px;border-top:1px solid color-mix(in oklch,var(--border) 80%,transparent);font:9px var(--font-mono);color:var(--muted)}.native-graph-node-foot span:last-child{max-width:112px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.orchestrator .native-graph-node-foot{color:color-mix(in oklch,var(--surface) 70%,transparent)}
+    .native-worker-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
+    .native-worker-tag{display:inline-flex;padding:2px 5px;border:1px solid var(--border);background:var(--surface-2);font:9px var(--font-mono);color:var(--muted)}
+    .orchestrator .native-worker-tag{border-color:color-mix(in oklch,var(--surface) 35%,transparent);background:transparent;color:color-mix(in oklch,var(--surface) 78%,transparent)}
+    .native-graph-minimap{position:absolute;right:12px;bottom:12px;width:150px;height:82px;border:1px solid var(--border);background:color-mix(in oklch,var(--surface) 92%,transparent);box-shadow:0 4px 14px var(--shadow);z-index:8;pointer-events:none}.native-graph-minimap i{position:absolute;width:13px;height:7px;background:var(--border-strong)}
+    #nativeOrchestrationModePanel{min-height:420px;padding:6px 0}.queue-card{display:grid;gap:4px;padding:10px;border:1px solid var(--border);background:var(--surface)}.queue-card>span{font:10px var(--font-mono);color:var(--muted);overflow-wrap:anywhere}
+    @media(max-width:767px){.native-orchestration-content{width:calc(100% - 20px);padding-top:10px}.native-orch-toolbar{overflow-x:auto}.native-graph-scroll{max-height:430px}.native-graph-node{width:190px}.native-runtime-row{grid-template-columns:3px minmax(0,1fr)}.native-runtime-row .worker-runtime{grid-column:2}.ultranote-shell{padding:14px}.ultranote-header{display:grid}.ultranote-onboarding,.ultranote-grid,.ultranote-plan{grid-template-columns:1fr}.ultranote-note-row{display:grid}.project-manager{grid-template-columns:1fr}.project-list{border-right:0;border-bottom:1px solid var(--border);padding:0 0 12px}.project-folder-row{grid-template-columns:1fr}.slash-menu button{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="app" id="app" data-od-id="lunascope-v14">
+    <header class="global-header" data-od-id="global-header">
+      <div class="header-left">
+        <button class="icon-btn" id="sidebarToggle" aria-label="切换侧栏"><span class="moon" aria-hidden="true"></span></button>
+        <div class="header-title"><strong id="headerTitle">LunaScope</strong><span id="headerMeta" class="header-meta">本地 Agent 工作台</span></div>
+      </div>
+      <div class="header-right"><span class="status running" id="runStatus">运行中</span><button class="icon-btn" id="moreMenu" aria-label="更多操作">•••</button></div>
+    </header>
+    <aside class="sidebar" data-od-id="project-thread-sidebar">
+      <div class="side-top"><button class="primary-btn signal new-task" id="newTask"><span>新建项目</span></button><button class="project-switch" id="projectSwitch"><strong>未选择项目</strong><span>新建或选择项目</span></button></div>
+      <div class="side-scroll"><div class="section-label">THREADS</div><div id="threadList"></div></div>
+      <div class="side-bottom">
+        <button class="side-link" data-special="memory"><span class="side-glyph">ME</span><span>Memory</span></button>
+        <button class="side-link" data-special="integrations"><span class="side-glyph">IN</span><span>Skills &amp; MCP</span></button>
+        <button class="side-link" data-special="settings"><span class="side-glyph">ST</span><span>设置</span></button>
+      </div>
+    </aside>
+    <main class="workspace" data-od-id="main-workspace"><nav class="tabs" id="tabs" role="tablist" aria-label="当前线程视图"></nav><section class="view" id="view" data-od-id="workspace-view"></section><section class="composer" id="composer" data-od-id="composer"><div class="composer-box"><textarea id="composerInput" placeholder="告诉 LunaScope 下一步要做什么…"></textarea><div class="composer-foot"><div class="row"><button class="icon-btn" data-composer="attach" aria-label="添加文件">＋</button><button class="icon-btn" data-composer="context" aria-label="添加上下文">@</button><button class="icon-btn" data-composer="command" aria-label="命令">/</button><button class="ghost-btn config-link" id="runConfig">选择模型 · 自动路由</button></div><div class="composer-permissions"><label class="bypass-toggle" title="自动批准可批准动作；Rust 极端风险硬拒绝仍然生效"><input type="checkbox" id="bypassMode"> Bypass</label><select id="computerAccessMode" aria-label="电脑访问权限"><option value="request_approval">请求批准</option><option value="self_approve" selected>自我审批</option><option value="full_access">完全访问</option></select><button class="primary-btn" id="send">发送</button></div></div></div></section></main>
+    <aside class="review" id="review" data-od-id="context-review-pane" aria-hidden="true"><div class="review-head"><strong id="reviewTitle">Worker Inspector</strong><button class="icon-btn" id="closeReview" aria-label="关闭审阅">×</button></div><nav class="review-tabs" id="reviewTabs"></nav><div class="review-body" id="reviewBody" tabindex="-1"></div></aside>
+    <footer class="statusbar" data-od-id="status-bar"><button class="text-btn" id="toggleConsole">Console</button><span id="statusText">ORCH-01 · Phase 02 · 3 Workers active</span><span class="spacer"></span><span id="approvalStatus">1 项审批</span><button class="text-btn" id="themeToggle">深色</button></footer>
+    <nav class="mobile-nav" id="mobileNav" data-od-id="mobile-navigation"></nav>
+  </div>
+  <section class="console-panel" id="console" data-od-id="bottom-console"><div class="console-head"><strong>Runtime Output</strong><button class="icon-btn" id="closeConsole">×</button></div><pre id="consoleOutput"></pre></section>
+  <dialog id="patchDialog"><div class="dialog" data-od-id="patch-review-dialog"><div class="dialog-head"><div><strong>审阅 Orchestration Patch</strong><div class="mono" id="patchVersion">Graph v4 → v5</div></div><button class="icon-btn" data-close>×</button></div><div class="dialog-body" id="patchBody"></div><div class="dialog-foot"><button class="ghost-btn" id="discardPatch">放弃</button><div class="row"><button class="text-btn" id="applyLater">当前步骤后应用</button><button class="primary-btn signal" id="applyPatch">应用 Patch</button></div></div></div></dialog>
+  <dialog id="promptDialog"><div class="dialog wide" data-od-id="worker-prompt-studio"><div class="dialog-head"><div><strong>Worker Prompt</strong><div class="mono" id="promptMeta">Generated by ORCH-01 · Version 3</div></div><button class="icon-btn" data-close>×</button></div><div class="dialog-body prompt-studio"><nav class="prompt-sections" id="promptSections"></nav><div class="prompt-editor"><div class="row" style="justify-content:space-between;margin-bottom:10px"><span class="provenance" id="promptOrigin">Generated by Orchestrator</span><div class="row"><button class="ghost-btn" id="comparePrompt">比较</button><button class="ghost-btn" id="rewritePrompt">请求重写</button></div></div><textarea class="textarea" id="promptEditor" spellcheck="false"></textarea></div></div><div class="dialog-foot"><button class="ghost-btn" id="resetPrompt">重置</button><div class="row"><button class="text-btn" id="lockPrompt">锁定字段</button><button class="primary-btn" id="savePrompt">保存为 Patch</button></div></div></div></dialog>
+  <dialog id="runDialog"><div class="dialog" data-od-id="run-config-dialog"><div class="dialog-head"><strong>运行配置</strong><button class="icon-btn" data-close>×</button></div><div class="dialog-body" id="runConfigBody"></div><div class="dialog-foot"><button class="ghost-btn" data-close>取消</button><button class="primary-btn" id="saveRun">保存</button></div></div></dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script>
+  (()=>{
+    'use strict';
+    const KEY='lunascope-v16-clean-state';
+    const workerPrompt=(role,objective,output)=>`ROLE\n${role}\n\nOBJECTIVE\n${objective}\n\nTASK\n完成分配给你的受限任务，不扩大范围。\n\nINPUTS\n项目文件、Plan Step 与 Orchestrator 提供的上下文。\n\nCONSTRAINTS\n遵守 Scope Contract；高风险操作必须请求审批。\n\nTOOLS\nFilesystem · Shell · Git\n\nOUTPUT CONTRACT\n${output}\n\nCOMPLETION CRITERIA\n输出可审阅、可验证，并附证据。\n\nFAILURE BEHAVIOR\n停止写入，保存 Checkpoint，并向 ORCH-01 报告。`;
+    const defaults={theme:'dark',sidebar:true,console:false,activeView:'conversation',activeThread:null,orchMode:'blueprint',runStatus:'idle',delegation:'auto',selected:null,selectedNodes:[],selectedEdge:null,connectFrom:null,customEdges:[],hiddenEdges:[],reroutes:{},inspectorTab:'overview',zoom:.78,panX:36,panY:48,graphVersion:1,pendingPatch:null,events:[],threads:[],conversationEvents:{},positions:{},workers:{}};
+    const orchestration={orchestrationId:null,version:1,status:'draft',source:null,createdBy:null,planId:null,strategy:null,decision:null,rationaleSummary:'',estimatedDuration:'',estimatedCost:'',parallelism:0,maximumWorkers:6,orchestrator:{id:'ORCH-01',role:'Task Orchestrator',strategy:null,phase:'Not started',activeWorkers:0,pendingResults:0,synthesis:'No run'},edges:[],phases:[],checkpoints:[],pendingPatch:null,createdAt:null,updatedAt:null};
+    let state=load();const threads=state.threads;let drag=null;let toastTimer,eventRenderTimer;const undoStack=[],redoStack=[];
+    let nativeRuntimeProjection={plan:null,result:null,changeSets:[],agentPlans:{},states:{}};
+    let executionActivity=null;
+    const conversationScroll={pinned:true,programmatic:false,lastView:null,lastThread:null};
+    function isLegacySyntheticNarrative(event){if(String(event?.type||'')!=='assistant_message')return false;const text=String(event?.summary||'');return text.includes('已经完成第')&&text.includes('轮工具操作')||text.includes('正在执行下一项可观察操作')||text.includes('has completed tool round')||text.includes('is performing the next observable operation')}
+    function cleanStoredRuntimeEvents(events){return (Array.isArray(events)?events:[]).filter(event=>!isLegacySyntheticNarrative(event)).map(event=>{if(String(event?.type||'')!=='agent_status'||!Array.isArray(event.trace))return event;const trace=event.trace.filter(step=>{const text=String(step?.summary||'');return !text.includes('正在检查第')&&!text.includes('Model is evaluating tool results')});return Object.assign({},event,{trace})})}
+    function load(){try{
+      const raw=JSON.parse(localStorage.getItem(KEY)||'null'),out=Object.assign(structuredClone(defaults),raw||{}, {workers:Object.assign(structuredClone(defaults.workers),raw?.workers||{})});
+      out.selectedNodes=Array.isArray(out.selectedNodes)?out.selectedNodes:[];
+      out.customEdges=Array.isArray(out.customEdges)?out.customEdges:[];
+      out.hiddenEdges=Array.isArray(out.hiddenEdges)?out.hiddenEdges:[];
+      out.reroutes=out.reroutes&&typeof out.reroutes==='object'?out.reroutes:{};
+      out.threads=Array.isArray(out.threads)?out.threads:[];
+      out.conversationEvents=out.conversationEvents&&typeof out.conversationEvents==='object'&&!Array.isArray(out.conversationEvents)?out.conversationEvents:{};
+      Object.keys(out.conversationEvents).forEach(threadId=>out.conversationEvents[threadId]=cleanStoredRuntimeEvents(out.conversationEvents[threadId]));
+      if(out.activeThread&&!out.threads.some(thread=>thread.id===out.activeThread))out.threads.unshift({id:out.activeThread,title:'已恢复的对话',time:'刚刚',status:'waiting',attention:false,projectId:null,runId:null});
+      if(!out.activeThread&&out.threads.length)out.activeThread=out.threads[0].id;
+      if(out.activeThread&&Array.isArray(out.conversationEvents[out.activeThread]))out.events=structuredClone(out.conversationEvents[out.activeThread]);else out.events=cleanStoredRuntimeEvents(out.events);
+      return out
+    }catch{return structuredClone(defaults)}}
+    function boundedConversationEvents(events){let transient=0;return (Array.isArray(events)?events:[]).filter(event=>{if(['user_message','assistant_message'].includes(String(event?.type||'')))return true;transient++;return transient<=160})}
+    function persistActiveConversation(){state.threads=threads;if(state.activeThread)state.conversationEvents[state.activeThread]=structuredClone(boundedConversationEvents(state.events))}
+    function save(){try{persistActiveConversation();localStorage.setItem(KEY,JSON.stringify(state))}catch(error){console.error('Failed to persist lightweight UI projection; durable conversation storage remains authoritative.',error)}}
+    function runtimeRunIdForThread(thread){
+      if(!thread)return null;
+      const events=thread.id===state.activeThread?state.events:state.conversationEvents[thread.id];
+      const orchestrationEvent=(Array.isArray(events)?events:[]).find(event=>String(event?.id||'').startsWith('orchestration-run-run-'));
+      return orchestrationEvent?String(orchestrationEvent.id).slice('orchestration-run-'.length):(thread.runId||null)
+    }
+    function activeConversationReference(thread){
+      if(!thread)return null;
+      const runId=runtimeRunIdForThread(thread);
+      if(runId&&thread.runId!==runId){thread.runId=runId;save()}
+      return {threadId:thread.id,runId,projectId:thread.projectId||null}
+    }
+    const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)];
+    const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    function markdownInline(value){
+      const tokens=[];
+      const token=html=>`@@LUNAMD${tokens.push(html)-1}@@`;
+      let text=String(value??'');
+      text=text.replace(/`([^`\n]+)`/g,(_,code)=>token(`<code>${esc(code)}</code>`));
+      text=text.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g,(whole,label,href)=>{
+        try{
+          const url=new URL(href,location.origin);
+          if(!['http:','https:','mailto:'].includes(url.protocol))return whole;
+          const external=url.origin!==location.origin;
+          return token(`<a href="${esc(url.href)}"${external?' target="_blank" rel="noopener noreferrer"':''}>${esc(label)}</a>`)
+        }catch{return whole}
+      });
+      text=esc(text)
+        .replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>')
+        .replace(/~~([^~\n]+)~~/g,'<del>$1</del>')
+        .replace(/(^|[\s(])\*([^*\n]+)\*/g,'$1<em>$2</em>');
+      return text.replace(/@@LUNAMD(\d+)@@/g,(_,index)=>tokens[Number(index)]||'')
+    }
+    function markdown(value){
+      const lines=String(value??'').replace(/\r\n?/g,'\n').split('\n');
+      const output=[];
+      const startsBlock=line=>/^```/.test(line)||/^(#{1,6})\s+/.test(line)||/^\s*([-*+]|\d+\.)\s+/.test(line)||/^>\s?/.test(line)||/^\s*---+\s*$/.test(line);
+      for(let index=0;index<lines.length;){
+        const line=lines[index];
+        if(!line.trim()){index++;continue}
+        const fence=line.match(/^```([A-Za-z0-9_-]*)\s*$/);
+        if(fence){
+          const code=[];index++;
+          while(index<lines.length&&!/^```\s*$/.test(lines[index]))code.push(lines[index++]);
+          if(index<lines.length)index++;
+          output.push(`<pre><code${fence[1]?` class="language-${esc(fence[1])}"`:''}>${esc(code.join('\n'))}</code></pre>`);
+          continue
+        }
+        const heading=line.match(/^(#{1,6})\s+(.+)$/);
+        if(heading){const level=heading[1].length;output.push(`<h${level}>${markdownInline(heading[2])}</h${level}>`);index++;continue}
+        if(/^\s*---+\s*$/.test(line)){output.push('<hr>');index++;continue}
+        if(/^>\s?/.test(line)){
+          const quote=[];
+          while(index<lines.length&&/^>\s?/.test(lines[index]))quote.push(lines[index++].replace(/^>\s?/,''));
+          output.push(`<blockquote>${quote.map(markdownInline).join('<br>')}</blockquote>`);
+          continue
+        }
+        if(/^\s*[-*+]\s+/.test(line)){
+          const items=[];
+          while(index<lines.length){
+            const item=lines[index].match(/^\s*[-*+]\s+(.+)$/);
+            if(!item)break;
+            items.push(`<li>${markdownInline(item[1])}</li>`);index++
+          }
+          output.push(`<ul>${items.join('')}</ul>`);
+          continue
+        }
+        if(/^\s*\d+\.\s+/.test(line)){
+          const items=[];
+          while(index<lines.length){
+            const item=lines[index].match(/^\s*\d+\.\s+(.+)$/);
+            if(!item)break;
+            items.push(`<li>${markdownInline(item[1])}</li>`);index++
+          }
+          output.push(`<ol>${items.join('')}</ol>`);
+          continue
+        }
+        const paragraph=[];
+        while(index<lines.length&&lines[index].trim()&&!startsBlock(lines[index]))paragraph.push(lines[index++]);
+        if(paragraph.length)output.push(`<p>${paragraph.map(markdownInline).join('<br>')}</p>`);
+        else{output.push(`<p>${markdownInline(lines[index])}</p>`);index++}
+      }
+      return output.join('')
+    }
+    const emptyCard=(kind,titleZh,titleEn,helpZh,helpEn)=>`<section class="provider-card" data-empty-kind="${kind}" data-empty-title-zh="${esc(titleZh)}" data-empty-title-en="${esc(titleEn)}" data-empty-help-zh="${esc(helpZh)}" data-empty-help-en="${esc(helpEn)}"><strong>${document.documentElement.dataset.uiLanguage==='english'?esc(titleEn):esc(titleZh)}</strong><span class="settings-help">${document.documentElement.dataset.uiLanguage==='english'?esc(helpEn):esc(helpZh)}</span></section>`;
+    function toast(msg){const el=$('#toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2200)}
+    function emit(type,title,summary){state.events.unshift({id:'EV-'+Date.now(),type,title,summary,time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})});save()}
+    function route(view){state.activeView=view;state.selected=null;closeReview();save();location.hash=view==='settings'?'#/settings/general':`#/project/lunascope/thread/${state.activeThread}/${view}`;render()}
+    function render(){document.documentElement.dataset.theme=state.theme;$('#app').className=`app ${state.sidebar?'':'sidebar-collapsed'} ${state.selected?'review-open':''} ${state.console?'console-open':''}`;renderSidebar();renderHeader();renderTabs();renderView();renderReview();renderStatus();renderMobile();}
+    function renderHeader(){const orch=state.activeView==='orchestration';$('#headerTitle').textContent=orch?'LunaScope / Orchestration':'LunaScope / 重构 Agent Console';$('#runStatus').className=`status ${state.runStatus}`;$('#runStatus').textContent=state.runStatus==='running'?'运行中':state.runStatus==='paused'?'已暂停':'已完成';}
+    function renderSidebar(){$('#threadList').innerHTML=threads.map(t=>`<button class="thread ${t.id===state.activeThread&& !['memory','integrations','settings'].includes(state.activeView)?'active':''}" data-thread="${t.id}"><span class="dot ${t.status}"></span><span class="thread-main"><strong>${esc(t.title)}</strong><small>${esc(t.time)}</small></span>${t.attention?'<i class="attention"></i>':''}</button>`).join('')}
+    const views=[['conversation','对话'],['orchestration','编排'],['plan','计划'],['changes','变更'],['agents','Workers'],['artifacts','交付物']];
+    function renderTabs(){const hide=['memory','integrations','settings'].includes(state.activeView);$('.workspace').classList.toggle('special-view',hide);$('#tabs').classList.toggle('hidden',hide);$('#composer').classList.toggle('hidden',hide || state.activeView!=='conversation');$('#tabs').innerHTML=views.map(([id,label])=>`<button class="tab ${state.activeView===id?'active':''}" role="tab" aria-selected="${state.activeView===id}" data-view="${id}">${label}${id==='changes'?'<span class="badge">· 4</span>':''}</button>`).join('')}
+    function renderView(){
+      const map={conversation:conversationView,plan:planView,changes:changesView,agents:agentsView,artifacts:artifactsView,orchestration:orchView,memory:memoryView,integrations:integrationsView,settings:settingsView},view=$('#view');
+      const conversation=state.activeView==='conversation',viewChanged=conversationScroll.lastView!==state.activeView,threadChanged=conversationScroll.lastThread!==state.activeThread;
+      const previousTop=view.scrollTop,nearBottom=view.scrollHeight-view.scrollTop-view.clientHeight<96;
+      const followBottom=conversation&&(viewChanged||threadChanged||conversationScroll.pinned||nearBottom);
+      view.classList.toggle('orch-active',state.activeView==='orchestration');
+      view.innerHTML=(map[state.activeView]||conversationView)();
+      conversationScroll.lastView=state.activeView;conversationScroll.lastThread=state.activeThread;
+      requestAnimationFrame(()=>{
+        if(state.activeView==='orchestration'){view.scrollTop=viewChanged?0:previousTop;drawGraph();return}
+        conversationScroll.programmatic=true;
+        if(conversation)view.scrollTop=followBottom?view.scrollHeight:Math.min(previousTop,Math.max(0,view.scrollHeight-view.clientHeight));
+        else if(viewChanged)view.scrollTop=0;
+        else view.scrollTop=previousTop;
+        requestAnimationFrame(()=>{conversationScroll.programmatic=false})
+      })
+    }
+    function conversationView(){const dynamic=state.events.map(e=>`<div class="event"><div class="event-head"><div class="event-title"><strong>${esc(e.title)}</strong><span>${esc(e.summary)} · ${e.time}</span></div></div></div>`).join('');return `<div class="reader">${dynamic||emptyCard('conversation','尚无对话','No conversation yet','在下方输入任务，或输入 / 查看 LunaScope 功能。','Enter a task below, or type / to view LunaScope commands.')}</div>`}
+    function planView(){return `<div class="pane-head"><strong>Execution Plan</strong></div>${emptyCard('plan','尚无计划','No plan yet','提交任务后，Orchestrator 会在这里生成可审阅计划。','The Orchestrator will create a reviewable plan after you submit a task.')}`}
+    function changesView(){return `<div class="pane-head"><strong>Changed Files</strong></div>${emptyCard('changes','尚无变更','No changes yet','Agent 对工作区产生的真实文件变更会显示在这里。','Real workspace changes made by Agents will appear here.')}`}
+    function agentsView(){return `<div class="pane-head"><strong>Workers</strong><button class="ghost-btn" data-open-orch>打开 Orchestration</button></div>${emptyCard('workers','尚无 Worker','No Workers yet','创建编排后，可以选择多个 Worker 角色并为其添加标签。','Create an orchestration to select multiple Worker roles and labels.')}`}
+    function artifactsView(){return `<div class="pane-head"><strong>Artifacts</strong></div>${emptyCard('artifacts','尚无交付物','No artifacts yet','运行产生并完成验证的交付物会显示在这里。','Verified artifacts produced by a run will appear here.')}`}
+    function memoryView(){return `<div class="pane-head"><div><strong>Context &amp; Memory</strong><span class="provenance" style="margin-left:10px">Durable ledger</span></div><button class="primary-btn">记住新规则</button></div>${emptyCard('memory','尚无记忆','No memories yet','保存的规则、决策和项目知识会显示在这里。','Saved rules, decisions, and project knowledge will appear here.')}`}
+    function integrationsView(){return `<section id="nativeIntegrationsPanel"><div class="pane-head"><div><strong>Skills, Tools &amp; MCP</strong><span class="settings-help">正在读取原生扩展目录…</span></div></div></section>`}
+    function settingsView(){const items=[['General','general'],['Models & Providers','providers'],['Skills & MCP','skills-mcp'],['Projects & Folders','projects'],['UltraNote','ultranote']];return `<div class="settings-layout"><nav class="settings-menu">${items.map((x,i)=>`<button class="${i===0?'active':''}" data-settings-page="${x[1]}">${x[0]}</button>`).join('')}</nav><section id="nativeSettingsPanel"></section></div>`}
+    function orchView(){return `<section class="orch" data-od-id="orchestration-workspace"><header class="orch-toolbar"><div class="segments">${['blueprint','runtime','queue','handoffs'].map(m=>`<button class="seg-btn ${state.orchMode===m?'active':''}" data-orch-mode="${m}">${m[0].toUpperCase()+m.slice(1)}</button>`).join('')}</div><span class="spacer"></span><button class="text-btn" data-orch-action="add">＋ Worker</button><button class="text-btn" data-orch-action="layout">Auto Layout</button><button class="text-btn" data-orch-action="fit">Fit</button><button class="text-btn" data-orch-action="focus">Focus</button><span class="mono" id="zoomLabel">${Math.round(state.zoom*100)}%</span></header><div class="orch-stage">${state.orchMode==='queue'?queueView():state.orchMode==='handoffs'?handoffView():`<div class="canvas" id="canvas"><div class="graph-plane" id="graphPlane"><div id="groups"></div><svg class="edge-svg" id="edges" viewBox="0 0 1500 760" aria-label="Worker connections"></svg><div id="nodes"></div></div><div class="minimap" id="minimap"></div></div>${state.pendingPatch?`<div class="patchbar"><div><strong>Pending Orchestration Patch</strong><span style="display:block;color:var(--muted);font-size:12px">${state.pendingPatch.summary}</span></div><button class="primary-btn signal" data-review-patch>审阅 Patch</button></div>`:''}`}</div></section>`}
+    function queueView(){const cols=[['Running',[]],['Waiting',[]],['Complete',[]],['Failed',[]]];return `<div class="queue"><div class="queue-columns">${cols.map(c=>`<section class="queue-col"><div class="list-head"><strong>${c[0]}</strong><span>0</span></div><p style="color:var(--muted)">暂无 Worker</p></section>`).join('')}</div></div>`}
+    function handoffView(){return `<div class="pane-head"><strong>Handoffs</strong><button class="ghost-btn">仅显示当前阶段</button></div><table class="table"><thead><tr><th>FROM</th><th>TO</th><th>TYPE</th><th>PAYLOAD</th><th>STATUS</th></tr></thead><tbody>${orchestration.edges.map(e=>`<tr><td>${e.from}</td><td>${e.to}</td><td>${e.type}</td><td class="mono">${e.label}</td><td>${e.status}</td></tr>`).join('')}</tbody></table>`}
+    const allEdges=()=>[...orchestration.edges,...state.customEdges].filter(e=>!state.hiddenEdges.includes(e.id));
+    const anchor=id=>{const p=state.positions[id]||[0,0],w=id==='ORCH-01'?260:232;return {in:{x:p[0],y:p[1]+62},out:{x:p[0]+w,y:p[1]+62}}};
+    const path=(a,b)=>{const h=Math.max(54,Math.min(170,Math.abs(b.x-a.x)*.42));return b.x>=a.x?`M${a.x},${a.y} C${a.x+h},${a.y} ${b.x-h},${b.y} ${b.x},${b.y}`:`M${a.x},${a.y} C${a.x+70},${a.y} ${b.x-70},${b.y} ${b.x},${b.y}`};
+    const edgePath=e=>{const pts=[anchor(e.from).out,...(state.reroutes[e.id]||[]),anchor(e.to).in];return pts.slice(1).map((p,i)=>path(pts[i],p)).join(' ')};
+    const snapshot=()=>JSON.stringify({positions:state.positions,customEdges:state.customEdges,hiddenEdges:state.hiddenEdges,reroutes:state.reroutes});
+    function pushUndo(){undoStack.push(snapshot());if(undoStack.length>30)undoStack.shift();redoStack.length=0}
+    function applyGraph(raw){if(!raw)return;const v=JSON.parse(raw);state.positions=v.positions;state.customEdges=v.customEdges;state.hiddenEdges=v.hiddenEdges||[];state.reroutes=v.reroutes;save();drawGraph()}
+    function undoGraph(){const raw=undoStack.pop();if(!raw)return;redoStack.push(snapshot());applyGraph(raw);toast('已撤销 Graph 操作')}
+    function redoGraph(){const raw=redoStack.pop();if(!raw)return;undoStack.push(snapshot());applyGraph(raw);toast('已重做 Graph 操作')}
+    function updateGraphSelection(){$$('.node').forEach(n=>n.classList.toggle('selected',state.selectedNodes.includes(n.dataset.node)));$$('.edge').forEach(e=>e.classList.toggle('selected',e.nextElementSibling?.dataset.edge===state.selectedEdge));$$('.reroute').forEach(r=>r.classList.toggle('selected',r.dataset.reroute.startsWith(`${state.selectedEdge}:`)))}
+    function drawGraph(){if(!$('#graphPlane'))return;$('#graphPlane').style.transform=`translate(${state.panX}px,${state.panY}px) scale(${state.zoom})`;$('#groups').innerHTML=orchestration.phases.map(p=>`<div class="phase" style="left:${p.x}px;top:${p.y}px;width:${p.w}px;height:${p.h}px"><span class="phase-label">${p.id} · ${p.title}</span></div>`).join('');const sel=state.selectedNodes||[],hasGraph=Object.keys(state.workers).length>0||allEdges().length>0;if(!hasGraph){$('#nodes').innerHTML='<section class="provider-card" style="position:absolute;left:80px;top:80px;width:360px"><strong>尚无编排</strong><span class="settings-help">输入任务目标后，LunaScope 会生成可编辑的 Worker 图。</span></section>';$('#edges').innerHTML='';$('#minimap').innerHTML='';return}const orch=orchestration.orchestrator;$('#nodes').innerHTML=`<article class="node orchestrator ${sel.includes('ORCH-01')?'selected':''}" data-node="ORCH-01" style="left:${state.positions['ORCH-01'][0]}px;top:${state.positions['ORCH-01'][1]}px"><button class="socket output ${state.connectFrom==='ORCH-01'?'connecting':''}" data-socket="out" aria-label="Orchestrator output"></button><header class="node-head"><div><div class="node-id">ORCHESTRATOR</div><div class="node-role">${orch.id} · ${orch.role}</div></div><span class="node-status">${state.runStatus==='interrupted'?'Waiting approval':state.runStatus}</span></header><div class="node-body">${orch.phase}<div class="node-output">${orch.activeWorkers} workers active · ${orch.pendingResults} result waiting</div></div><footer class="node-foot"><span>SYNTHESIS</span><span>${orch.synthesis}</span></footer></article>`+Object.values(state.workers).map(w=>{const p=state.positions[w.workerId];return `<article class="node ${w.status} ${sel.includes(w.workerId)?'selected':''}" data-node="${w.workerId}" style="left:${p[0]}px;top:${p[1]}px"><button class="socket input ${state.connectFrom?'connecting':''}" data-socket="in" aria-label="${w.workerId} input"></button><button class="socket output ${state.connectFrom===w.workerId?'connecting':''}" data-socket="out" aria-label="${w.workerId} output"></button><header class="node-head"><div><div class="node-id">${w.workerId}</div><div class="node-role">${w.role}</div></div><span class="node-status">${w.status} · ${w.runtimeHealth}</span></header><div class="node-body">${w.objective}<div class="node-output">OUTPUT · ${w.expectedOutput}</div></div><footer class="node-foot"><span>${w.phase}</span><span>${w.progress}%</span></footer></article>`}).join('')+Object.entries(state.reroutes).flatMap(([edge,pts])=>pts.map((p,i)=>`<button class="reroute ${state.selectedEdge===edge?'selected':''}" data-reroute="${edge}:${i}" style="left:${p.x}px;top:${p.y}px" aria-label="Reroute ${edge}"></button>`)).join('');$('#edges').innerHTML=allEdges().map(e=>{const cls=`edge ${e.status==='consumed'?'active':''} ${state.selectedEdge===e.id?'selected':''} ${e.type==='approval'?'approval':''} ${e.type==='fallback'?'fallback':''}`;return `<path class="${cls}" d="${edgePath(e)}"></path><path class="edge-hit" data-edge="${e.id}" d="${edgePath(e)}"></path>`}).join('');$('#minimap').innerHTML=Object.entries(state.positions).map(([id,p])=>`<i style="left:${p[0]/10}px;top:${p[1]/9}px" title="${id}"></i>`).join('')}
+    function openWorker(id){state.selected=id;state.inspectorTab='overview';save();render()}
+    function renderReview(){const pane=$('#review');if(!state.selected){pane.setAttribute('aria-hidden','true');return}pane.setAttribute('aria-hidden','false');const id=state.selected;const w=state.workers[id];$('#reviewTitle').textContent=id==='ORCH-01'?'Orchestrator Inspector':`${id} · Worker Inspector`;const tabs=id==='ORCH-01'?['overview','plan','strategy','runtime','history']:['overview','prompt','context','tools','permissions','output','runtime','history'];$('#reviewTabs').innerHTML=tabs.map(t=>`<button class="${state.inspectorTab===t?'active':''}" data-inspect-tab="${t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join('');$('#reviewBody').innerHTML=id==='ORCH-01'?orchestratorInspector():workerInspector(w,state.inspectorTab);requestAnimationFrame(()=>$('#reviewBody').focus({preventScroll:true}))}
+    function orchestratorInspector(){return `<section class="inspect-section"><h3>TASK INTERPRETATION</h3><p>发布级重构：保留现有能力，建立唯一 Orchestrator、受限 Worker、可审阅 Patch 与证据闭环。</p></section><section class="inspect-section"><h3>CONTROL STATE</h3><dl class="definition"><div><dt>Strategy</dt><dd>${orchestration.strategy}</dd></div><div><dt>Decision</dt><dd>${orchestration.decision}</dd></div><div><dt>Current phase</dt><dd>${orchestration.orchestrator.phase}</dd></div><div><dt>Workers</dt><dd>4 / max ${orchestration.maximumWorkers}</dd></div><div><dt>Synthesis</dt><dd>${orchestration.orchestrator.synthesis}</dd></div></dl></section><button class="primary-btn" data-open-prompt="ORCH-01">编辑 Synthesis Instructions</button>`}
+    function workerInspector(w,tab){if(tab==='prompt')return `<section class="inspect-section"><div class="event-head"><div><h3>WORKER PROMPT</h3><span class="provenance ${w.userOverrides.includes('prompt')?'user':''}">${w.userOverrides.includes('prompt')?'User override':'Generated by ORCH-01'} · v${w.promptVersion}</span></div><button class="primary-btn" data-open-prompt="${w.workerId}">打开 Prompt Studio</button></div><pre class="diff" style="margin-top:12px">${esc(w.prompt.slice(0,620))}${w.prompt.length>620?'\n…':''}</pre></section>`;if(tab==='permissions')return `<section class="inspect-section"><h3>PERMISSION POLICY</h3>${Object.entries(w.permissions).map(([k,v])=>`<div class="setting-row"><div><strong>${k}</strong><span class="provenance ${w.lockedFields.includes('permissions')?'user':''}">${w.lockedFields.includes('permissions')?'LOCKED BY USER':'Generated by Orchestrator'}</span></div><button class="ghost-btn" data-permission="${k}">${v}</button></div>`).join('')}</section>`;if(tab==='tools')return `<section class="inspect-section"><h3>TOOLS &amp; SKILLS</h3><dl class="definition"><div><dt>Tools</dt><dd>${w.tools.join(' · ')}</dd></div><div><dt>Skills</dt><dd>${w.skills.join(' · ')}</dd></div><div><dt>Selected by</dt><dd>ORCH-01 · Required for ${w.phase}</dd></div></dl></section>`;if(tab==='context')return `<section class="inspect-section"><h3>INPUT CONTEXT</h3>${w.inputContext.map(x=>`<div class="compact-row"><span class="dot complete"></span><span><strong>${x}</strong><small>Included · ${w.contextPolicy}</small></span><button class="ghost-btn">排除</button></div>`).join('')}</section>`;if(tab==='output')return `<section class="inspect-section"><h3>OUTPUT CONTRACT</h3><dl class="definition"><div><dt>Artifact</dt><dd class="mono">${w.expectedOutput}</dd></div><div><dt>Schema</dt><dd>${w.outputSchema}</dd></div><div><dt>Completion</dt><dd>${w.completionCriteria}</dd></div><div><dt>Handoff</dt><dd>${w.workerId==='WK-04'?'ORCH-01':'Next phase'}</dd></div></dl></section>`;if(tab==='runtime')return `<section class="inspect-section"><h3>RUNTIME</h3><dl class="definition"><div><dt>Status</dt><dd>${w.status}</dd></div><div><dt>Health</dt><dd>${w.runtimeHealth}</dd></div><div><dt>Progress</dt><dd>${w.progress}%</dd></div><div><dt>Checkpoint</dt><dd>CP-0317-01</dd></div><div><dt>Budget</dt><dd>${w.budget}</dd></div><div><dt>Timeout</dt><dd>${w.timeout}</dd></div></dl></section>`;if(tab==='history')return `<section class="inspect-section"><h3>CHANGE HISTORY</h3><div class="compact-list"><div class="compact-row"><span class="dot complete"></span><span><strong>Prompt v${w.promptVersion}</strong><small>${w.updatedBy} · 10:08</small></span></div><div class="compact-row"><span class="dot complete"></span><span><strong>Worker created</strong><small>${w.createdBy} · 10:04</small></span></div></div></section>`;return `<section class="inspect-section"><h3>ASSIGNMENT</h3><dl class="definition"><div><dt>Role</dt><dd>${w.role}</dd></div><div><dt>Objective</dt><dd>${w.objective}</dd></div><div><dt>Task</dt><dd>${w.task}</dd></div><div><dt>Created by</dt><dd>${w.createdBy}</dd></div><div><dt>Phase</dt><dd>${w.phase}</dd></div><div><dt>Model</dt><dd>${w.model} ${w.lockedFields.includes('model')?'<span class="provenance user">LOCKED BY USER</span>':''}</dd></div><div><dt>Status</dt><dd>${w.status} · ${w.runtimeHealth}</dd></div></dl></section><div class="row"><button class="primary-btn" data-open-prompt="${w.workerId}">编辑 Prompt</button><button class="ghost-btn" data-worker-action="pause">${w.status==='running'?'暂停':'恢复'}</button></div>`}
+    function closeReview(){state.selected=null;save()}
+    function renderStatus(){$('#statusText').textContent=`ORCH-01 · ${orchestration.orchestrator.phase} · ${Object.values(state.workers).filter(w=>w.status==='running').length} Worker active`;$('#themeToggle').textContent=state.theme==='light'?'深色':'浅色';document.body.classList.toggle('console-open',state.console);$('#consoleOutput').textContent='[10:04] ORCH-01  orchestration.created  ORC-LS-0317\n[10:06] WK-01    artifact.created      reference-audit.md\n[10:07] WK-02    handoff.consumed     migration-map.json → WK-03\n[10:11] WK-03    tool.running         browser verification pending approval';}
+    function renderMobile(){$('#mobileNav').innerHTML=[['conversation','Threads'],['orchestration','Run'],['approval','Approvals'],['artifacts','Artifacts'],['settings','More']].map(([v,l])=>`<button class="${state.activeView===v?'active':''}" data-mobile="${v}">${l}</button>`).join('')}
+    function openPrompt(id){if(id==='ORCH-01'){toast('Synthesis Instructions 由 Orchestrator Inspector 管理');return}const w=state.workers[id];$('#promptMeta').textContent=`Generated by ORCH-01 · Version ${w.promptVersion}`;$('#promptEditor').value=w.prompt;$('#promptEditor').dataset.worker=id;$('#promptOrigin').className=`provenance ${w.userOverrides.includes('prompt')?'user':''}`;$('#promptOrigin').textContent=w.userOverrides.includes('prompt')?'User override':'Generated by Orchestrator';$('#promptSections').innerHTML=['ROLE','OBJECTIVE','TASK','INPUTS','CONSTRAINTS','TOOLS','OUTPUT CONTRACT','COMPLETION CRITERIA','FAILURE BEHAVIOR'].map(x=>`<button class="list-item">${x}</button>`).join('');$('#promptDialog').showModal()}
+    function queuePatch(worker,field,from,to){state.pendingPatch={worker,field,from,to,summary:`${worker} · ${field} changed`,impact:['Worker must restart from checkpoint','Estimated cost +8%','Partial output will be preserved']};orchestration.pendingPatch=state.pendingPatch;save();emit('orchestration_patch','Orchestration Patch created',`${worker} · ${field}`);route('orchestration')}
+    function showPatch(){$('#patchVersion').textContent=`Graph v${state.graphVersion} → v${state.graphVersion+1}`;const p=state.pendingPatch;if(!p)return;$('#patchBody').innerHTML=`<table class="table"><tr><th>OBJECT</th><th>FIELD</th><th>CHANGE</th></tr><tr><td>${p.worker}</td><td>${p.field}</td><td><span class="mono">${esc(p.from)}</span> → <span class="mono">${esc(p.to)}</span></td></tr></table><section class="inspect-section"><h3>IMPACT</h3><ul>${p.impact.map(x=>`<li>${x}</li>`).join('')}</ul></section>`;$('#patchDialog').showModal()}
+    function applyPatch(later=false){const p=state.pendingPatch;if(!p)return;const w=state.workers[p.worker];if(p.field==='Prompt'){w.prompt=p.to;w.promptVersion++;w.userOverrides=[...new Set([...w.userOverrides,'prompt'])]}state.graphVersion++;state.pendingPatch=null;orchestration.pendingPatch=null;emit('orchestration_patch_applied',later?'Patch scheduled':'Patch applied',`${p.worker} · ${p.field}`);save();$('#patchDialog').close();toast(later?'将在当前步骤后应用':'Patch 已应用并创建 Checkpoint');render()}
+    function openRunConfig(){$('#runConfigBody').innerHTML=`<div class="field"><label>Delegation Mode</label><select class="select" id="delegationSelect"><option value="auto">Auto</option><option value="ask">Ask before spawn</option><option value="single">Single-agent only</option><option value="manual">Manual</option></select></div><div class="field"><label>Model</label><select class="select"><option>Use configured route</option></select></div><div class="field"><label>Environment</label><select class="select"><option>Selected workspace</option></select></div><div class="field"><label>Permission Mode</label><select class="select"><option>Ask for risky actions</option><option>Read-only</option><option>Allow in scope</option></select></div>`;$('#delegationSelect').value=state.delegation;$('#runDialog').showModal()}
+    function fitGraph(){state.zoom=.78;state.panX=36;state.panY=48;save();drawGraph()}
+    function autoLayout(){state.positions={'ORCH-01':[50,270],'WK-01':[390,110],'WK-02':[390,330],'WK-03':[760,220],'WK-04':[1090,270]};save();drawGraph();toast('已按阶段重新布局')}
+    function handleClick(e){const b=e.target.closest('button,[data-worker],tr[data-worker],[data-edge],[data-node],[data-reroute]');if(!b)return;if(b.dataset.deleteThread){const thread=threads.find(item=>item.id===b.dataset.deleteThread),english=document.documentElement.dataset.uiLanguage==='english';if(thread&&confirm(english?`Delete “${thread.title}”? This cannot be undone.`:`删除“${thread.title}”？此操作无法撤销。`))window.lunaScopeUi.removeConversation(thread.id);return}if(b.dataset.view)return route(b.dataset.view);if(b.dataset.thread){window.lunaScopeUi.activateConversation(b.dataset.thread);return}if(b.dataset.special)return route(b.dataset.special);if(b.dataset.mobile){if(b.dataset.mobile==='approval'){route('conversation');toast('已定位到待审批事件')}else route(b.dataset.mobile);return}if(b.dataset.openOrch!==undefined)return route('orchestration');if(b.dataset.worker)return openWorker(b.dataset.worker);if(b.dataset.socket){const node=b.closest('[data-node]')?.dataset.node;if(b.dataset.socket==='out'){state.connectFrom=node;toast(`选择 ${node} 的下游 Worker`);save();return drawGraph()}if(state.connectFrom&&node&&state.connectFrom!==node){if(allEdges().some(x=>x.from===state.connectFrom&&x.to===node))return toast('连接已存在');pushUndo();const id='E-CUSTOM-'+Date.now();state.customEdges.push({id,from:state.connectFrom,to:node,type:'dependency',status:'draft',label:'User connection'});state.pendingPatch={worker:`${state.connectFrom} → ${node}`,field:'Dependency',from:'—',to:'Added',summary:'Dependency added by user',impact:['Graph version increments','Downstream schedule may change','Running workers are not restarted']};state.connectFrom=null;save();drawGraph();return toast('已创建 Draft 连接')}return}if(b.dataset.node){const id=b.dataset.node;if(e.shiftKey||e.ctrlKey||e.metaKey)state.selectedNodes=state.selectedNodes.includes(id)?state.selectedNodes.filter(x=>x!==id):[...state.selectedNodes,id];else state.selectedNodes=[id];state.selectedEdge=null;save();return updateGraphSelection()}if(b.dataset.edge){state.selectedEdge=b.dataset.edge;state.selectedNodes=[];save();return updateGraphSelection()}if(b.dataset.reroute){state.selectedEdge=b.dataset.reroute.split(':')[0];save();return updateGraphSelection()}if(b.dataset.inspectTab){state.inspectorTab=b.dataset.inspectTab;save();return renderReview()}if(b.dataset.openPrompt)return openPrompt(b.dataset.openPrompt);if(b.dataset.orchMode){state.orchMode=b.dataset.orchMode;save();return renderView()}if(b.dataset.orchAction==='fit')return fitGraph();if(b.dataset.orchAction==='layout')return autoLayout();if(b.dataset.orchAction==='focus'){document.documentElement.requestFullscreen?.();toast('Focus Mode · Esc 退出');return}if(b.dataset.orchAction==='add'){state.pendingPatch={worker:'New Worker',field:'Worker',from:'—',to:'WK-05',summary:'Add Verification Reviewer',impact:['Graph version increments','Estimated cost +12%','No running worker restarts']};save();return render()}if(b.dataset.reviewPatch!==undefined)return showPatch();if(b.dataset.approval){b.closest('.event').remove();emit('approval_resolved','Approval resolved',b.dataset.approval==='allow'?'Allowed once':'Rejected');return toast(b.dataset.approval==='allow'?'已允许一次':'已拒绝')}if(b.dataset.change){emit('changes_reviewed','Changes reviewed',`${b.dataset.change} · indexV14.html`);toast('变更状态已同步到 Conversation');return}if(b.dataset.permission){const w=state.workers[state.selected],from=w.permissions[b.dataset.permission],to=from==='Allow'?'Ask':from==='Ask'?'Deny':'Allow';w.permissions[b.dataset.permission]=to;queuePatch(w.workerId,`${b.dataset.permission} permission`,from,to);return}if(b.dataset.workerAction){const w=state.workers[state.selected];w.status=w.status==='running'?'paused':'running';emit(w.status==='paused'?'worker_paused':'worker_resumed',`${w.workerId} ${w.status}`,w.task);save();return render()}if(b.hasAttribute('data-close'))return b.closest('dialog').close()}
+    function bind(){document.addEventListener('click',handleClick);$('#sidebarToggle').onclick=()=>{state.sidebar=!state.sidebar;save();render()};$('#toggleConsole').onclick=()=>{state.console=!state.console;save();renderStatus()};$('#closeConsole').onclick=()=>{state.console=false;save();renderStatus()};$('#closeReview').onclick=()=>{closeReview();render()};$('#themeToggle').onclick=()=>{state.theme=state.theme==='light'?'dark':'light';save();render()};$('#runConfig').onclick=openRunConfig;$('#saveRun').onclick=()=>{state.delegation=$('#delegationSelect').value;save();$('#runDialog').close();toast('运行配置已保存')};$('#send').onclick=()=>{const v=$('#composerInput').value.trim();if(!v)return;emit('user_message','User intervention',v);$('#composerInput').value='';toast('约束已发送给 ORCH-01');renderView()};$('#savePrompt').onclick=()=>{const id=$('#promptEditor').dataset.worker,w=state.workers[id],next=$('#promptEditor').value;if(next===w.prompt)return $('#promptDialog').close();$('#promptDialog').close();queuePatch(id,'Prompt',w.prompt,next)};$('#resetPrompt').onclick=()=>{const w=state.workers[$('#promptEditor').dataset.worker];$('#promptEditor').value=workerPrompt(w.role,w.objective,w.expectedOutput)};$('#rewritePrompt').onclick=()=>toast('ORCH-01 已生成一个候选 Prompt 版本');$('#comparePrompt').onclick=()=>toast('Diff Mode 已开启');$('#lockPrompt').onclick=()=>toast('Prompt 将在 Patch 应用后锁定');$('#applyPatch').onclick=()=>applyPatch(false);$('#applyLater').onclick=()=>applyPatch(true);$('#discardPatch').onclick=()=>{state.pendingPatch=null;save();$('#patchDialog').close();render()};$$('dialog').forEach(d=>d.addEventListener('click',e=>{if(e.target===d)d.close()}));$('#composerInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('#send').click()}});window.addEventListener('hashchange',syncRoute);window.addEventListener('keydown',e=>{const editing=/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName||'');if(e.key==='Escape'){if(state.connectFrom){state.connectFrom=null;drawGraph()}else if(state.selected||state.selectedNodes.length||state.selectedEdge){closeReview();state.selectedNodes=[];state.selectedEdge=null;save();render()}}if(!editing&&(e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redoGraph():undoGraph()}if(!editing&&(e.key==='Delete'||e.key==='Backspace')&&state.selectedEdge){pushUndo();state.hiddenEdges=[...new Set([...state.hiddenEdges,state.selectedEdge])];state.pendingPatch={worker:state.selectedEdge,field:'Connection',from:'Active',to:'Removed',summary:'Connection removed by user',impact:['Graph version increments','Downstream dependencies are recalculated','Running work is preserved']};state.selectedEdge=null;save();render()}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();openRunConfig()}});bindGraph()}
+    function bindGraph(){document.addEventListener('pointerdown',e=>{if(state.activeView!=='orchestration')return;const reroute=e.target.closest('[data-reroute]'),node=e.target.closest('.node'),canvas=e.target.closest('#canvas');if(reroute){pushUndo();const [edge,index]=reroute.dataset.reroute.split(':'),p=state.reroutes[edge][+index];drag={type:'reroute',edge,index:+index,x:e.clientX,y:e.clientY,ox:p.x,oy:p.y,moved:false};reroute.setPointerCapture?.(e.pointerId)}else if(node&&!e.target.closest('.socket')){const id=node.dataset.node;if(!state.selectedNodes.includes(id))state.selectedNodes=[id];pushUndo();drag={type:'node',id,x:e.clientX,y:e.clientY,origins:Object.fromEntries(state.selectedNodes.map(n=>[n,[...state.positions[n]]])),moved:false};node.setPointerCapture?.(e.pointerId)}else if(canvas&&!e.target.closest('.minimap'))drag={type:'canvas',x:e.clientX,y:e.clientY,ox:state.panX,oy:state.panY,moved:false}});document.addEventListener('pointermove',e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.moved=Math.hypot(dx,dy)>4;if(drag.type==='node'){Object.entries(drag.origins).forEach(([id,p])=>state.positions[id]=[p[0]+dx/state.zoom,p[1]+dy/state.zoom]);drawGraph()}else if(drag.type==='reroute'){state.reroutes[drag.edge][drag.index]={x:drag.ox+dx/state.zoom,y:drag.oy+dy/state.zoom};drawGraph()}else{state.panX=drag.ox+dx;state.panY=drag.oy+dy;drawGraph()}});document.addEventListener('pointerup',()=>{if(drag){if(drag.type==='canvas'&&!drag.moved){state.selectedNodes=[];state.selectedEdge=null;state.connectFrom=null;closeReview();render()}save();drag=null}});document.addEventListener('wheel',e=>{if(state.activeView!=='orchestration'||!e.target.closest('#canvas'))return;e.preventDefault();state.zoom=Math.max(.45,Math.min(1.35,state.zoom*(e.deltaY>0?.92:1.08)));save();drawGraph()},{passive:false});document.addEventListener('dblclick',e=>{const edge=e.target.closest('[data-edge]'),n=e.target.closest('.node');if(edge){const rect=$('#canvas').getBoundingClientRect(),x=(e.clientX-rect.left-state.panX)/state.zoom,y=(e.clientY-rect.top-state.panY)/state.zoom;pushUndo();(state.reroutes[edge.dataset.edge]??=[]).push({x,y});state.selectedEdge=edge.dataset.edge;save();drawGraph();return}if(n)openWorker(n.dataset.node)})}
+    function syncRoute(){const h=location.hash;if(h.includes('/orchestration'))state.activeView='orchestration';else if(h.includes('/settings'))state.activeView='settings';else{const last=h.split('/').pop();if(views.some(v=>v[0]===last))state.activeView=last}save();render()}
+    /* V14 — one runtime event source, derived into every workspace */
+    state.runtimeVersion=14;
+    state.lensExpanded=Boolean(state.lensExpanded);
+    state.showCompleteWorkers=Boolean(state.showCompleteWorkers);
+    state.activityDetail=state.activityDetail||'standard';
+    state.verification={status:'pending',checks:{responsive:'pending',interaction:'pending',accessibility:'pending'}};
+    state.changesReview={accepted:0,total:0,tests:'pending',reviewed:true,acceptedFiles:[]};
+    state.changesReview.acceptedFiles=Array.isArray(state.changesReview.acceptedFiles)?state.changesReview.acceptedFiles:[];
+    state.activeFile=null;
+    state.mobileDiffOpen=Boolean(state.mobileDiffOpen);
+    state.attachments=[];
+    state.interrupt=null;
+    state.runHistory=[];
+    const runtimeAdapter={
+      dispatch(event){
+        if(!event||!event.type)return;
+        const p=event.payload||{};
+        if(event.type==='RUN_PAUSED'){
+          state.runStatus='paused';
+          Object.values(state.workers).forEach(w=>{if(['running','verifying'].includes(w.status)){w.pausedByRun=w.status;w.status='paused';w.currentAction='Paused by user'}});
+        }
+        if(event.type==='RUN_RESUMED'){
+          state.runStatus='running';
+          Object.values(state.workers).forEach(w=>{if(w.pausedByRun){w.status=w.pausedByRun;w.pausedByRun=null;w.currentAction=w.workerId==='WK-03'?'Continuing from checkpoint':'Verification resumed'}});
+        }
+        if(event.type==='RUN_STOPPED'){
+          state.runStatus='stopped';Object.values(state.workers).forEach(w=>{if(w.status!=='complete'){w.status='cancelled';w.currentAction='Stopped · output preserved'}});
+        }
+        if(event.type==='RUN_COMPLETED')state.runStatus='complete';
+        if(event.type==='RUN_FAILED')state.runStatus='failed';
+        if(event.type==='WORKER_STATE_CHANGED'&&state.workers[p.workerId])Object.assign(state.workers[p.workerId],{status:p.status,runtimeHealth:p.runtimeHealth||state.workers[p.workerId].runtimeHealth,currentAction:p.currentAction||state.workers[p.workerId].currentAction});
+        if(event.type==='WORKER_PROGRESS_UPDATED'&&state.workers[p.workerId])Object.assign(state.workers[p.workerId],{progress:p.progress,progressSource:p.progressSource||state.workers[p.workerId].progressSource,currentAction:p.currentAction||state.workers[p.workerId].currentAction});
+        if(event.type==='WORKER_COMPLETED'&&state.workers[p.workerId])Object.assign(state.workers[p.workerId],{status:'complete',runtimeHealth:'Healthy',progress:100,currentAction:'Output ready'});
+        if(event.type==='INTERRUPT_CREATED'){
+          state.interrupt=Object.assign({},state.interrupt,p,{status:'pending'});
+          state.runStatus='interrupted';
+          if(state.workers[p.workerId])state.workers[p.workerId].status='waiting-approval';
+        }
+        if(event.type==='INTERRUPT_RESOLVED'){
+          state.interrupt=Object.assign({},state.interrupt,{status:'resolved',decision:p.decision,resolvedAt:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}),rejecting:false});
+          state.runStatus='running';
+          const w=state.workers[state.interrupt.workerId];
+          if(w){w.status=p.decision==='reject'?'waiting':'running';w.currentAction=p.decision==='reject'?'Orchestrator is replanning':'Continuing from CP-0317-02'}
+          if(p.decision==='reject')state.runStatus='running';
+        }
+        if(event.type==='PATCH_APPLIED'){
+          const file=p.file||state.activeFile;if(!state.changesReview.acceptedFiles.includes(file))state.changesReview.acceptedFiles.push(file);
+          state.changesReview.accepted=state.changesReview.acceptedFiles.length;state.changesReview.reviewed=state.changesReview.accepted===state.changesReview.total;
+          if(state.changesReview.reviewed&&state.verification.status==='passed')state.runStatus='complete';
+        }
+        if(event.type==='PATCH_REJECTED'){
+          const file=p.file||state.activeFile;state.changesReview.acceptedFiles=state.changesReview.acceptedFiles.filter(x=>x!==file);state.changesReview.accepted=state.changesReview.acceptedFiles.length;state.changesReview.reviewed=false;
+        }
+        if(event.type==='VERIFICATION_UPDATED'){
+          state.verification=Object.assign({},state.verification,p);
+          if(p.status==='running'){Object.assign(state.workers['WK-03'],{status:'complete',progress:100,currentAction:'Output ready'});Object.assign(state.workers['WK-04'],{status:'verifying',currentAction:'Running 3 verification suites'})}
+          if(p.status==='passed'){Object.assign(state.workers['WK-04'],{status:'complete',progress:100,currentAction:'verification-report.json ready'});if(state.changesReview.reviewed)state.runStatus='complete'}
+        }
+        if(!event.silent){
+          state.events.unshift({id:event.id||`EV-${Date.now()}`,type:event.type,title:event.title||event.type.replaceAll('_',' '),summary:event.summary||'',time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})});
+          state.runHistory.push({id:`H-${Date.now()}`,time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}),title:event.title||event.type,detail:event.summary||'',status:'current'});
+          state.runHistory.slice(0,-1).forEach(x=>x.status='complete');
+        }
+        save();render();
+      },
+      applySnapshot(snapshot){Object.assign(state,structuredClone(snapshot));save();render()},
+      applyDelta(patch){Object.entries(patch||{}).forEach(([k,v])=>state[k]=v&&typeof v==='object'&&!Array.isArray(v)?Object.assign({},state[k]||{},v):v);save();render()},
+      interrupt(interrupt){this.dispatch({type:'INTERRUPT_CREATED',title:'Approval required',summary:interrupt.action,payload:interrupt})},
+      resume(decision){this.dispatch({type:'INTERRUPT_RESOLVED',title:decision==='reject'?'Approval rejected':'Run resumed',summary:decision==='reject'?'ORCH-01 is planning an alternative':'Permission granted once · resumed from CP-0317-02',payload:{decision}})}
+    };
+    window.runtimeAdapter=runtimeAdapter;
+    window.lunaScopeUi={
+      newConversation(thread){
+        persistActiveConversation();
+        const next={id:String(thread.id),title:String(thread.title||'等待首条消息'),time:'刚刚',status:'waiting',attention:false,projectId:thread.projectId?String(thread.projectId):null,runId:thread.runId?String(thread.runId):null};
+        const existing=threads.findIndex(item=>item.id===next.id);
+        if(existing>=0)threads.splice(existing,1);
+        threads.unshift(next);
+        state.activeThread=next.id;
+        state.activeView='conversation';
+        state.events=structuredClone(state.conversationEvents[next.id]||[]);
+        save();
+        location.hash=`#/project/lunascope/thread/${next.id}/conversation`;
+        render();
+      },
+      renameConversation(threadId,title){
+        const id=String(threadId),thread=threads.find(item=>item.id===id),next=String(title||'').trim();
+        if(!thread||!next)return false;
+        thread.title=next;
+        thread.time=document.documentElement.dataset.uiLanguage==='english'?'Just now':'刚刚';
+        save();renderSidebar();
+        return true
+      },
+      bindConversationRun(threadId,runId){
+        const id=String(threadId),next=String(runId||'').trim(),thread=threads.find(item=>item.id===id);
+        if(!thread||!next)return false;
+        thread.runId=next;
+        save();
+        return true
+      },
+      activateConversation(threadId){
+        const id=String(threadId),thread=threads.find(item=>item.id===id);
+        if(!thread)return null;
+        persistActiveConversation();
+        state.activeThread=id;
+        state.events=structuredClone(state.conversationEvents[id]||[]);
+        state.activeView='conversation';
+        save();render();
+        return activeConversationReference(thread)
+      },
+      activeConversation(){
+        const thread=threads.find(item=>item.id===state.activeThread);
+        return activeConversationReference(thread)
+      },
+      removeConversation(threadId){
+        const id=String(threadId),index=threads.findIndex(item=>item.id===id);
+        if(index<0)return {deleted:false,wasActive:false,runId:null,projectId:null};
+        persistActiveConversation();
+        const removed=threads[index],wasActive=state.activeThread===id;
+        threads.splice(index,1);
+        delete state.conversationEvents[id];
+        if(wasActive){
+          const fallback=threads[0]||null;
+          state.activeThread=fallback?.id||null;
+          state.activeView='conversation';
+          state.events=fallback?structuredClone(state.conversationEvents[fallback.id]||[]):[];
+          state.selected=null;
+          location.hash=fallback?`#/project/lunascope/thread/${fallback.id}/conversation`:'#/project/lunascope/conversation';
+        }
+        save();render();
+        toast(document.documentElement.dataset.uiLanguage==='english'?'Conversation deleted':'对话已删除');
+        const active=threads.find(thread=>thread.id===state.activeThread)||null;
+        return {deleted:true,wasActive,runId:removed.runId||null,projectId:removed.projectId||null,activeConversation:active?{threadId:active.id,runId:active.runId||null,projectId:active.projectId||null}:null}
+      },
+      removeProjectConversations(projectId){
+        const id=String(projectId),targets=threads.filter(thread=>thread.projectId===id).map(thread=>thread.id),removedActive=targets.includes(state.activeThread);
+        persistActiveConversation();
+        for(const threadId of targets){
+          const index=threads.findIndex(thread=>thread.id===threadId);
+          if(index>=0)threads.splice(index,1);
+          delete state.conversationEvents[threadId]
+        }
+        if(removedActive){
+          const fallback=threads[0]||null;
+          state.activeThread=fallback?.id||null;
+          state.activeView='conversation';
+          state.events=fallback?structuredClone(state.conversationEvents[fallback.id]||[]):[];
+          state.selected=null;
+          location.hash=fallback?`#/project/lunascope/thread/${fallback.id}/conversation`:'#/project/lunascope/conversation'
+        }
+        save();render();
+        const active=threads.find(thread=>thread.id===state.activeThread)||null;
+        return {removed:targets.length,removedThreadIds:targets,removedActive,activeConversation:active?{threadId:active.id,runId:active.runId||null,projectId:active.projectId||null}:null}
+      },
+      clearOrchestration(){
+        state.workers={};
+        state.positions={};
+        state.customEdges=[];
+        state.hiddenEdges=[];
+        state.reroutes={};
+        state.selectedNodes=[];
+        state.selectedEdge=null;
+        state.connectFrom=null;
+        state.pendingPatch=null;
+        orchestration.edges=[];
+        orchestration.phases=[];
+        orchestration.checkpoints=[];
+        orchestration.pendingPatch=null;
+        orchestration.status='draft';
+        save();
+        if(state.activeView==='orchestration')renderView()
+      },
+      setRuntimeProjection(projection){
+        const previousId=nativeRuntimeProjection.plan?.orchestrationId;
+        const nextId=projection?.plan?.orchestrationId;
+        nativeRuntimeProjection={
+          plan:projection?.plan||null,
+          result:projection?.result||null,
+          changeSets:Array.isArray(projection?.changeSets)?projection.changeSets:[],
+          agentPlans:projection?.agentPlans||{},
+          states:previousId===nextId?nativeRuntimeProjection.states:{}
+        };
+        if(['plan','changes','agents','artifacts'].includes(state.activeView))renderView()
+      },
+      setExecutionActivity(activity){
+        executionActivity=activity||null;
+        if(activity?.workerId)nativeRuntimeProjection.states[activity.workerId]=activity.state;
+        const status=$('#statusText');
+        if(status){
+          const worker=activity?.workerId?`${activity.workerId} · `:'';
+          status.textContent=activity?`${worker}${activity.role} · ${activity.state} · ${activity.detail}`:'尚无运行';
+          status.classList.toggle('run-attention',Boolean(activity?.running))
+        }
+      },
+      mergeConversationEvents(threadId,events){
+        const id=String(threadId),target=id===state.activeThread?state.events:structuredClone(state.conversationEvents[id]||[]);
+        for(const event of Array.isArray(events)?events:[]){
+          const eventId=String(event.id||'');if(!eventId)continue;
+          const index=target.findIndex(item=>item.id===eventId);if(index>=0)target.splice(index,1);
+          target.unshift({id:eventId,type:String(event.type||'assistant_message'),title:String(event.title||'LunaScope'),summary:String(event.summary||''),time:String(event.time||''),createdAt:String(event.createdAt||''),trace:[],openOrchestration:false,retryConversation:false,durable:true,sequence:Number(event.sequence||0)})
+        }
+        target.sort((left,right)=>{const a=Date.parse(String(left.createdAt||'')),b=Date.parse(String(right.createdAt||''));return Number.isFinite(a)&&Number.isFinite(b)?b-a:0});
+        const bounded=boundedConversationEvents(target);
+        state.conversationEvents[id]=structuredClone(bounded);
+        if(id===state.activeThread){state.events=bounded;save();if(state.activeView==='conversation')renderView()}
+        else save()
+      },
+      appendConversationEvent(event){
+        const eventId=String(event.id||`EV-${Date.now()}`);
+        const previous=state.events.find(item=>item.id===eventId);
+        const now=new Date(),time=now.toLocaleTimeString(document.documentElement.lang||'zh-CN',{hour:'2-digit',minute:'2-digit'}),createdAt=String(previous?.createdAt||now.toISOString());
+        const nextSummary=String(event.summary||'');
+        const trace=event.trackHistory===false?[]:(Array.isArray(previous?.trace)?previous.trace.slice(-39):[]);
+        if(event.trackHistory!==false&&!trace.length&&previous?.summary)trace.push({summary:String(previous.summary),time:String(previous.time||time)});
+        if(event.trackHistory!==false&&(!trace.length||trace[trace.length-1].summary!==nextSummary))trace.push({summary:nextSummary,time});
+        state.events=state.events.filter(item=>item.id!==eventId);
+        state.events.unshift({
+          id:eventId,
+          type:String(event.type||'assistant_message'),
+          title:String(event.title||'LunaScope'),
+          summary:nextSummary,
+          time,
+          createdAt,
+          trace,
+          openOrchestration:Boolean(event.openOrchestration),
+          retryConversation:Boolean(event.retryConversation)
+        });
+        state.events=boundedConversationEvents(state.events);
+        if(String(event.type||'')==='user_message')conversationScroll.pinned=true;
+        save();
+        clearTimeout(eventRenderTimer);
+        if(state.activeView==='conversation')patchConversationEvent(eventId);
+        else if(state.activeView==='agents')eventRenderTimer=setTimeout(()=>renderView(),96);
+        renderStatus()
+      }
+    };
+
+    const runtimeSelectors={
+      workers:()=>Object.values(state.workers),
+      active:()=>Object.values(state.workers).filter(w=>['running','waiting-approval','verifying'].includes(w.status)),
+      waiting:()=>Object.values(state.workers).filter(w=>w.status==='waiting'),
+      complete:()=>Object.values(state.workers).filter(w=>w.status==='complete'),
+      attention:()=>state.interrupt?.status==='pending'?1:0,
+      latestArtifact:()=>Object.values(state.workers).find(w=>w.expectedOutput)?.expectedOutput||'—'
+    };
+
+    function v14Button(label,attrs='',kind='text-btn'){return `<button class="${kind}" ${attrs}>${label}</button>`}
+    function eventHeader(type,title,summary,stateLabel='',stateClass=''){
+      return `<header class="runtime-event-header"><div><div class="runtime-event-kicker">${type}</div><h3 class="runtime-event-title">${title}</h3>${summary?`<div class="runtime-event-summary">${summary}</div>`:''}</div>${stateLabel?`<span class="event-state ${stateClass}">${stateLabel}</span>`:''}</header>`
+    }
+    function measurableProgress(w){
+      if(w.status==='complete')return 'Complete';
+      if(w.status==='waiting-approval')return 'Interrupted · approval required';
+      if(w.status==='waiting')return 'Waiting for dependency';
+      if(w.status==='verifying')return 'Verifying';
+      if(w.progressSource)return `${w.progress}% · ${esc(w.progressSource)}`;
+      return w.currentAction||'Working';
+    }
+    function workerRowV14(w){
+      const status=w.status==='waiting-approval'?'waiting-approval':w.status;
+      return `<button class="worker-activity-row control-reset" data-worker="${w.workerId}" data-status="${status}"><span class="worker-state-rail"></span><span class="worker-identity"><span class="worker-id">${w.workerId}${w.userOverrides?.length?' · USER OVERRIDE':''}</span><strong class="worker-role">${esc(w.role)}</strong></span><span class="worker-current"><span class="worker-task">${esc(w.task)}</span><span class="worker-action">${esc(w.currentAction||w.objective)}</span></span><span class="worker-runtime"><span class="runtime-status">${status.replace('-',' ')}</span><span class="runtime-progress">${measurableProgress(w)}</span></span></button>`
+    }
+    function executionLens(){
+      const active=runtimeSelectors.active(),waiting=runtimeSelectors.waiting(),attention=runtimeSelectors.attention();
+      return `<section class="execution-lens" data-od-id="execution-lens"><button class="execution-lens-toggle control-reset" data-v14="toggle-lens" aria-expanded="${state.lensExpanded}"><span class="lens-identity">ORCH-01</span><span class="lens-summary">Phase 02 / 04 · ${active.length} active · ${waiting.length} waiting · ${attention} attention · 12m elapsed</span><span aria-hidden="true">${state.lensExpanded?'−':'+'}</span></button>${state.lensExpanded?`<div class="lens-detail"><div class="lens-metric"><span>Current phase</span><strong>Interface implementation</strong></div><div class="lens-metric"><span>Active worker</span><strong>${active[0]?.workerId||'—'} · ${active[0]?.role||'None'}</strong></div><div class="lens-metric"><span>Next dependency</span><strong>${waiting[0]?.workerId||'—'} · ${waiting[0]?.currentAction||'Ready'}</strong></div><div class="lens-metric"><span>Latest artifact</span><strong class="mono">${runtimeSelectors.latestArtifact()}</strong></div></div><div class="runtime-event-actions" style="padding:0 12px 12px">${state.runStatus==='interrupted'?'':v14Button(state.runStatus==='running'?'Pause':'Resume','data-v14="toggle-run"','ghost-btn')}${v14Button('Open graph','data-open-orch','text-btn')}${attention?v14Button('View attention','data-v14="review-interrupt"','text-btn'):''}${v14Button('Checkpoint','data-v14="checkpoint"','text-btn')}${v14Button('Stop','data-v14="stop-run"','text-btn')}</div>`:''}</section>`
+    }
+    function workersEvent(){
+      const visible=runtimeSelectors.workers().filter(w=>w.status!=='complete'),complete=runtimeSelectors.complete();
+      return `<section class="runtime-event" data-od-id="workers-runtime-event">${eventHeader('WORKERS','Execution summary',`${visible.length} active or waiting · ${complete.length} complete`)}<div class="runtime-event-content worker-list">${visible.map(workerRowV14).join('')}${complete.length?`<div class="completed-group"><span>Completed · ${complete.length} workers</span>${v14Button(state.showCompleteWorkers?'Collapse':'Expand','data-v14="toggle-complete"','text-btn')}</div>${state.showCompleteWorkers?complete.map(workerRowV14).join(''):''}`:''}</div><footer class="runtime-event-actions">${v14Button('Inspect workers','data-view="agents"','text-btn')}${v14Button('Open orchestration','data-open-orch','text-btn')}</footer></section>`
+    }
+    function interruptEvent(){
+      const i=state.interrupt;if(!i||i.status!=='pending')return '';
+      return `<section class="runtime-event interrupt" data-od-id="runtime-interrupt">${eventHeader('INTERRUPT','Approval required',`${i.workerId} · ${i.title}`,`${i.risk} risk`,'needs-attention')}<div class="runtime-event-summary">${i.action}</div><div class="interrupt-grid"><div class="interrupt-fact"><span>Blocks</span><strong>${i.blocks.join(' · ')}</strong></div><div class="interrupt-fact"><span>Blast radius</span><strong>${i.blastRadius}</strong></div><div class="interrupt-fact"><span>Rollback</span><strong>${i.rollback}</strong></div></div>${i.rejecting?`<div class="field" style="margin-top:12px"><label for="rejectReason">Reject with instructions</label><textarea class="textarea" id="rejectReason">Do not launch an external browser. Use headless verification instead.</textarea></div>`:''}<footer class="runtime-event-actions">${v14Button('Review','data-v14="review-interrupt"','ghost-btn')}${v14Button('Allow once','data-v14="allow-once"','primary-btn signal')}${v14Button('Allow for run','data-v14="allow-run"','ghost-btn')}${v14Button(i.rejecting?'Confirm reject':'Reject',`data-v14="${i.rejecting?'confirm-reject':'reject-interrupt'}"`,'text-btn')}</footer></section>`
+    }
+    function evidenceEvent(){
+      return `<section class="runtime-event" data-od-id="changes-evidence-event">${eventHeader('CHANGES','Changes ready','4 files · +684 −142 · Tests pending','Needs review','needs-attention')}<div class="artifact-evidence"><div class="artifact-evidence-main"><strong class="artifact-evidence-name">indexV14.html</strong><span class="artifact-evidence-meta">Web prototype · WK-03 · v14</span><div class="evidence-list"><span class="evidence-pass">Static syntax passed</span><span>Responsive check pending</span></div></div><span class="status waiting">${state.changesReview.accepted} / ${state.changesReview.total} reviewed</span></div><footer class="runtime-event-actions">${v14Button('Review changes','data-view="changes"','primary-btn')}${v14Button('Run verification','data-v14="run-verification"','ghost-btn')}</footer></section>`
+    }
+    function completionEvent(){
+      if(state.runStatus!=='complete')return '';
+      return `<section class="runtime-event" data-od-id="artifact-first-completion">${eventHeader('COMPLETION','Run complete','ORCH-01 synthesized worker results','Verified','complete')}<div class="artifact-evidence"><div class="artifact-evidence-main"><strong class="artifact-evidence-name">indexV14.html</strong><span class="artifact-evidence-meta">Final artifact · synthesized by ORCH-01</span><div class="evidence-list"><span class="evidence-pass">Responsive check passed</span><span class="evidence-pass">Interaction smoke test passed</span><span class="evidence-pass">Accessibility check passed</span></div></div><span class="status complete">Verified</span></div><div class="runtime-event-summary">Remaining risk · Rust / Tauri runtime integration is not part of this front-end prototype.</div><footer class="runtime-event-actions">${v14Button('Open artifact','data-v14="review-artifact" data-artifact="indexV14.html"','primary-btn')}${v14Button('View changes','data-view="changes"','ghost-btn')}${v14Button('Run history','data-v14="run-history"','text-btn')}</footer></section>`
+    }
+    function semanticEvent(e){
+      if(e.type==='user_message')return `<article class="message user-message" data-event-id="${e.id}"><div class="speaker">YOU</div><div class="agent-copy markdown-body">${markdown(e.summary)}</div></article>`;
+      const trace=Array.isArray(e.trace)?e.trace:[];
+      const traceMarkup=trace.length>1?`<details class="stream-trace"${e.type==='agent_status'?' open':''}><summary>${document.documentElement.dataset.uiLanguage==='english'?'Run chain':'运行链路'} · ${trace.length}</summary><ol>${trace.map(step=>`<li><time>${esc(step.time)}</time><span>${markdownInline(step.summary)}</span></li>`).join('')}</ol></details>`:'';
+      if(e.type==='assistant_message')return `<article class="message" data-event-id="${e.id}"><div class="speaker">LUNASCOPE</div><div class="agent-copy markdown-body">${markdown(e.summary)}</div>${traceMarkup}${e.openOrchestration?`<div class="runtime-event-actions">${v14Button('查看编排图','data-open-orch','ghost-btn')}</div>`:''}${e.retryConversation?`<div class="runtime-event-actions retry-actions"><span>${document.documentElement.dataset.uiLanguage==='english'?'Retry failed Agent(s) only?':'是否只重试失败的子 Agent？'}</span>${v14Button(document.documentElement.dataset.uiLanguage==='english'?'Retry failed':'重试失败节点','data-retry-conversation','primary-btn')}${v14Button(document.documentElement.dataset.uiLanguage==='english'?'Not now':'暂不',`data-dismiss-retry="${esc(e.id)}"`,'ghost-btn')}</div>`:''}</article>`;
+      if(e.type==='reasoning_summary')return `<details class="reasoning-summary" data-event-id="${e.id}" open><summary><span>${esc(e.title)}</span><small>${esc(e.time)}</small></summary><div class="agent-copy markdown-body">${markdown(e.summary)}</div></details>`;
+      if(e.type==='assistant_commentary')return `<article class="message commentary-message" data-event-id="${e.id}"><div class="speaker">${esc(e.title)}</div><div class="agent-copy markdown-body">${markdown(e.summary)}</div></article>`;
+      if(e.type==='tool_activity'){const failed=String(e.summary||'').startsWith('失败')||String(e.summary||'').startsWith('Failed'),parts=String(e.summary||'').split(' · '),status=parts.shift()||'',detail=parts.join(' · ');return `<article class="tool-activity ${failed?'failed':''}" data-event-id="${e.id}"><span class="tool-icon">›_</span><div><strong>${esc(e.title)}</strong><p>${esc(detail)}</p></div><span class="tool-state">${esc(status)}</span></article>`}
+      if(e.type==='agent_status')return `<article class="message agent-stream" data-event-id="${e.id}"><div class="speaker">${document.documentElement.dataset.uiLanguage==='english'?'RUN STATUS':'执行状态'}</div><div class="agent-stream-head"><strong>${esc(e.title)}</strong><span>${esc(e.summary.split(' · ')[0])}</span></div><div class="agent-copy markdown-body">${markdown(e.summary)}</div>${traceMarkup}${e.openOrchestration?`<div class="runtime-event-actions">${v14Button(document.documentElement.dataset.uiLanguage==='english'?'View orchestration':'查看编排图','data-open-orch','ghost-btn')}</div>`:''}</article>`;
+      return `<section class="runtime-event" data-event-id="${e.id}">${eventHeader(e.type||'EVENT',esc(e.title),`${esc(e.summary)} · ${e.time}`)}</section>`
+    }
+
+    function patchConversationEvent(eventId){
+      const view=$('#view');if(state.activeView!=='conversation'||!view)return;
+      const item=state.events.find(event=>event.id===eventId);if(!item)return;
+      const stack=view.querySelector('.runtime-stack');if(!stack){renderView();return}
+      const nearBottom=view.scrollHeight-view.scrollTop-view.clientHeight<96,previousTop=view.scrollTop;
+      const template=document.createElement('template');template.innerHTML=semanticEvent(item).trim();const next=template.content.firstElementChild;if(!next)return;
+      const current=stack.querySelector(`[data-event-id="${CSS.escape(eventId)}"]`);if(current)current.replaceWith(next);else stack.append(next);
+      conversationScroll.programmatic=true;
+      requestAnimationFrame(()=>{view.scrollTop=conversationScroll.pinned||nearBottom?view.scrollHeight:previousTop;requestAnimationFrame(()=>{conversationScroll.programmatic=false})})
+    }
+    function conversationView(){
+      const dynamic=state.events.slice().reverse().map(semanticEvent).join('');
+      return `<div class="reader">${dynamic?`<div class="runtime-stack">${dynamic}</div>`:emptyCard('conversation','尚无对话','No conversation yet','在下方输入任务，LunaScope 会自动判断并生成单 Agent 或多 Agent 编排。','Enter a task below. LunaScope will automatically create a single-agent or multi-agent orchestration.')}</div>`
+    }
+    function isEnglishUi(){return document.documentElement.dataset.uiLanguage==='english'}
+    function hasHan(value){return /[\u3400-\u9fff]/.test(String(value||''))}
+    function uiProse(value,zhFallback,enFallback){const text=String(value||'').trim();return isEnglishUi()?(text||enFallback):(hasHan(text)?text:zhFallback)}
+    function roleLabel(role){const labels={builder:['项目实现','Builder'],frontend:['界面与交互','Frontend'],backend:['后端实现','Backend'],planner:['需求与方案','Planner'],researcher:['资料研究','Researcher'],reviewer:['修复与审查','Reviewer'],verifier:['独立验收','Verifier'],documentation:['文档整理','Documentation'],game_designer:['游戏设计','Game designer'],academic_writer:['学术写作','Academic writer'],orchestrator:['编排器','Orchestrator']};const item=labels[String(role||'').toLowerCase()];return item?(isEnglishUi()?item[1]:item[0]):(isEnglishUi()?String(role||'Worker'):`自定义子 Agent（${String(role||'worker')}）`)}
+    function stateLabel(status){const labels={pending:['待处理','Pending'],in_progress:['进行中','In progress'],planned:['已规划','Planned'],queued:['等待调度','Queued'],waiting_dependency:['等待前置结果','Waiting for dependencies'],running_model:['正在分析与生成','Analyzing and generating'],running_tool:['正在执行操作','Running an operation'],recovering:['正在自动恢复','Recovering'],localizing:['正在统一回复语言','Localizing output'],repair_planning:['正在生成修复链路','Generating repair chain'],verifying:['正在验收','Verifying'],retrying:['正在重试','Retrying'],completed:['已完成','Completed'],failed:['执行失败','Failed'],cancelled:['已取消','Cancelled'],paused:['已暂停','Paused']};const item=labels[String(status||'').toLowerCase()];return item?(isEnglishUi()?item[1]:item[0]):String(status||'')}
+    function verificationLabel(status){const labels={verified:['已验证','Verified'],partially_verified:['部分验证','Partially verified'],unverified:['未验证','Unverified'],unable_to_verify:['无法验证','Unable to verify'],failed_verification:['验收失败','Failed verification']};const item=labels[String(status||'').toLowerCase()];return item?(isEnglishUi()?item[1]:item[0]):String(status||'')}
+    function planView(){
+      const plan=nativeRuntimeProjection.plan,english=isEnglishUi();
+      if(!plan)return `<div class="pane-head"><strong>${english?'Execution Plan':'执行计划'}</strong></div>${emptyCard('plan','尚无计划','No plan yet','提交任务后，编排器会在这里生成可审阅计划。','The Orchestrator will create a reviewable plan after you submit a task.')}`;
+      const livePlans=nativeRuntimeProjection.agentPlans||{},roleById=Object.fromEntries(plan.workers.map(w=>[w.workerId,w.role]));
+      const entries=Object.entries(livePlans);
+      const rows=entries.length
+        ?entries.flatMap(([agentId,agentPlan])=>agentPlan.steps.map(step=>({agentId,role:agentId==='orchestrator'?'orchestrator':(roleById[agentId]||'worker'),step:step.step,status:step.status})))
+        :plan.workers.map(w=>({agentId:w.workerId,role:w.role,step:uiProse(w.task,'执行本节点职责并完成对应交付物。','Complete this Agent assignment and its deliverable.'),status:nativeRuntimeProjection.states[w.workerId]||'pending'}));
+      const table=rows.map((row,index)=>{const completed=row.status==='completed',active=['in_progress','running_model','running_tool','verifying','recovering'].includes(row.status),failed=row.status==='failed';const mark=completed?'✓':failed?'!':active?'●':'○';return `<tr class="${completed?'plan-complete':failed?'plan-failed':active?'plan-active':''}"><td class="plan-mark">${mark}</td><td><strong>${esc(row.step)}</strong></td><td><span>${esc(roleLabel(row.role))}</span><small>${esc(row.agentId)}</small></td><td>${esc(stateLabel(row.status))}</td></tr>`}).join('');
+      return `<div class="pane-head"><div><strong>${english?'Execution Plan':'执行计划'}</strong><span class="subtle">${esc(plan.orchestrationId)} · v${plan.version}</span></div><span class="status">${plan.decision.kind==='multi_agent'?(english?'Multi-agent':'多 Agent'):(english?'Single-agent':'单 Agent')}</span></div><section class="plan-sheet"><div class="plan-table-wrap"><table class="plan-table"><thead><tr><th></th><th>${english?'Step':'步骤'}</th><th>${english?'Agent':'Agent'}</th><th>${english?'Status':'状态'}</th></tr></thead><tbody>${table}</tbody></table></div></section>`
+    }
+    function diffLineMarkup(line){const old=line.oldLine??'',next=line.newLine??'',prefix=line.kind==='addition'?'+':line.kind==='deletion'?'-':line.kind==='context'?' ':' ';return `<div class="diff-line ${esc(line.kind)}"><span>${old}</span><span>${next}</span><code>${esc(prefix+line.content)}</code></div>`}
+    function changesView(){
+      const result=nativeRuntimeProjection.result,english=isEnglishUi(),sets=nativeRuntimeProjection.changeSets||[];
+      if(!result&&!sets.length)return `<div class="pane-head"><strong>${english?'Workspace Changes':'工作区变更'}</strong></div>${emptyCard('changes','尚无变更','No changes yet','Agent 对工作区产生的真实文件变更会显示在这里。','Real workspace changes made by Agents will appear here.')}`;
+      const files=sets.flatMap((set,stage)=>set.files.map(file=>({...file,stage,runId:set.runId}))),additions=sets.reduce((sum,set)=>sum+set.additions,0),deletions=sets.reduce((sum,set)=>sum+set.deletions,0),truncated=sets.some(set=>set.truncated);
+      const kindLabels={added:english?'Added':'新增',modified:english?'Modified':'修改',deleted:english?'Deleted':'删除',binary:english?'Binary':'二进制'};
+      const diffs=files.map((file,index)=>`<details class="diff-file"${index===0?' open':''}><summary><span class="diff-path">${esc(file.path)}</span><span class="diff-stat"><span class="add">+${file.additions}</span> <span class="del">−${file.deletions}</span></span><span class="diff-kind">${esc(kindLabels[file.kind]||file.kind)}</span></summary><div class="diff-code">${file.hunks.map(hunk=>`<div class="diff-hunk-head">${esc(hunk.header)}</div>${hunk.lines.map(diffLineMarkup).join('')}`).join('')||`<div class="diff-hunk-head">${english?'Binary or metadata-only change':'二进制或仅元数据变更'}</div>`}</div></details>`).join('');
+      const verification=result?.verification?.status||'unverified';
+      return `<div class="pane-head"><div><strong>${english?'Workspace Changes':'工作区变更'}</strong><span class="subtle">${files.length} ${english?'file changes':'项文件变更'} · ${sets.length} ${english?'run stages':'个运行阶段'}</span></div><span class="status ${verification==='verified'?'complete':'waiting'}">${esc(verificationLabel(verification))}</span></div>${files.length?`<div class="changes-summary"><strong>${files.length} ${english?'files':'个文件'}</strong><span class="diff-stat"><span class="add">+${additions}</span> <span class="del">−${deletions}</span></span>${truncated?`<span>${english?'Large diff truncated safely':'大型 diff 已安全截断'}</span>`:''}</div>${diffs}`:emptyCard('changes','没有可显示的文本差异','No text diff available','本次运行没有产生文本补丁；交付物和验收记录仍可在其他页面查看。','This run produced no text patch; artifacts and verification remain available.')}`
+    }
+    function agentsView(){
+      const plan=nativeRuntimeProjection.plan,result=nativeRuntimeProjection.result,english=isEnglishUi();
+      if(!plan)return `<div class="pane-head"><div><strong>${english?'Workers':'子 Agent'}</strong><span class="subtle">${english?'Restricted execution units managed by the Orchestrator':'由编排器管理的受限执行单元'}</span></div></div>${emptyCard('workers','尚无子 Agent','No Workers yet','创建编排后，子 Agent 会显示在这里。','Workers appear after orchestration is created.')}`;
+      const cards=plan.workers.map(w=>{const record=result?.workers?.[w.workerId],status=record?.state||nativeRuntimeProjection.states[w.workerId]||'planned',task=uiProse(w.task,'执行本节点职责并完成对应验收标准。','Execute this node and its acceptance criteria.'),summary=record?.summary?uiProse(record.summary,'本节点已完成，原始结构化证据保存在交付物中。','This node completed with structured evidence.'):uiProse(w.prompt,'按照编排要求检查、执行并验证。','Inspect, execute, and verify the assignment.');return `<button class="provider-card control-reset" style="text-align:left;width:100%" data-open-orch><header><div><strong>${esc(roleLabel(w.role))}</strong><small>${esc(w.workerId)} · ${esc((w.skills||[]).map(x=>x.split(':').pop()).join(' · ')||(english?'built-in tools':'内置工具'))}</small></div><span class="status ${status==='completed'?'complete':status==='failed'?'failed':'waiting'}">${esc(stateLabel(status))}</span></header><p>${esc(task)}</p><div class="routing-review">${esc(summary)}</div><small>${english?'Attempts':'尝试'} ${record?.attempts||0} · ${english?'Tools':'工具'} ${esc((w.tools||[]).join(' · '))}</small></button>`}).join('');
+      return `<div class="pane-head"><div><strong>${english?'Workers':'子 Agent'}</strong><span class="subtle">${plan.workers.length} ${english?'runtime units':'个运行单元'}</span></div><div class="row">${v14Button(english?'Open orchestration':'打开编排图','data-open-orch','ghost-btn')}</div></div><div class="provider-list">${cards}</div>`
+    }
+    function artifactsView(){
+      const result=nativeRuntimeProjection.result,english=isEnglishUi();
+      if(!result)return `<div class="pane-head"><strong>${english?'Artifacts':'交付物'}</strong></div>${emptyCard('artifacts','尚无交付物','No artifacts yet','运行产生并完成验证的交付物会显示在这里。','Verified artifacts produced by a run will appear here.')}`;
+      const rows=result.artifacts.map(a=>`<article class="provider-card"><header><div><strong>${esc(uiProse(a.name,a.mediaType==='text/x-diff'?'文件变更补丁':'子 Agent 结构化结果',a.name))}</strong><small>${esc(a.artifactId)} · ${esc(a.mediaType)}</small></div><span class="status complete">${english?'RECORDED':'已记录'}</span></header><div class="routing-review">${esc(a.path)}</div><small>SHA-256 · ${esc(a.sha256)}</small></article>`).join('');
+      const synthesis=uiProse(result.synthesis,'所有节点已结束；详细原始证据保存在各子 Agent 交付物中。','All nodes finished; detailed evidence is stored in the artifacts.');
+      return `<div class="pane-head"><div><strong>${english?'Artifacts':'交付物'}</strong><span class="subtle">${result.artifacts.length}</span></div><span class="status ${result.verification.status==='verified'?'complete':'waiting'}">${esc(verificationLabel(result.verification.status))}</span></div><div class="provider-list">${rows||emptyCard('artifacts','未生成文件交付物','No file artifacts','本次运行没有生成文件型交付物。','This run did not produce file artifacts.')}</div><article class="provider-card"><strong>${english?'Final synthesis':'最终汇总'}</strong><div class="markdown-body">${markdown(synthesis)}</div></article>`
+    }
+
+    function traceLens(w){return `<section class="inspect-section"><h3>TRACE LENS</h3><div class="trace-tree"><button class="trace-row control-reset"><span class="trace-type">ORCH</span><span><strong>Model response</strong><small>Task decomposition and worker assignment</small></span><span class="trace-duration">1.8s</span></button><button class="trace-row control-reset"><span class="trace-type">SPAWN</span><span><strong>Worker spawn · ${w.workerId}</strong><small>${esc(w.objective)}</small></span><span class="trace-duration">0.4s</span></button><button class="trace-row control-reset"><span class="trace-type">TOOL</span><span><strong>${state.interrupt?.status==='pending'?'Interrupt · browser verification':'Tool call · apply_patch'}</strong><small>${esc(w.currentAction||w.task)}</small></span><span class="trace-duration">${state.interrupt?.status==='pending'?'paused':'38s'}</span></button></div></section>`}
+    function contextualActions(kind,id){
+      if(kind==='worker'){const w=state.workers[id],primary=w?.status==='waiting-approval'?v14Button('Review approval','data-v14="review-interrupt"','ghost-btn'):v14Button(w?.status==='running'?'Pause':'Resume','data-v14="toggle-worker"','ghost-btn');return `<div class="contextual-actions">${primary}${v14Button('Open prompt',`data-open-prompt="${id}"`,'ghost-btn')}${v14Button('Locate in graph','data-open-orch','text-btn')}</div>`}
+      if(kind==='interrupt')return `<div class="contextual-actions">${v14Button('Allow once','data-v14="allow-once"','primary-btn signal')}${v14Button('Edit scope','data-v14="edit-scope"','ghost-btn')}${v14Button('Reject','data-v14="reject-interrupt"','text-btn')}</div>`;
+      return `<div class="contextual-actions">${v14Button('Open artifact','data-view="artifacts"','primary-btn')}${v14Button('View changes','data-view="changes"','ghost-btn')}${v14Button('Run verification','data-v14="run-verification"','text-btn')}</div>`;
+    }
+    function interruptInspector(){const i=state.interrupt;return `${contextualActions('interrupt',i.id)}<section class="inspect-section"><h3>RUNTIME INTERRUPT</h3><dl class="definition"><div><dt>Requester</dt><dd>${i.workerId} · ${i.title}</dd></div><div><dt>Action</dt><dd>${i.action}</dd></div><div><dt>Risk</dt><dd>${i.risk}</dd></div><div><dt>Scope</dt><dd>${i.scope}</dd></div><div><dt>Blast radius</dt><dd>${i.blastRadius}</dd></div><div><dt>Rollback</dt><dd>${i.rollback}</dd></div><div><dt>Recommendation</dt><dd>${i.recommendation}</dd></div></dl></section>`}
+    function artifactInspector(name){return `${contextualActions('artifact',name)}<section class="inspect-section"><h3>ARTIFACT EVIDENCE</h3><dl class="definition"><div><dt>Artifact</dt><dd class="mono">${name}</dd></div><div><dt>Created by</dt><dd>WK-03 · Frontend Worker</dd></div><div><dt>Verification</dt><dd>${state.verification.status}</dd></div><div><dt>Responsive</dt><dd>${state.verification.checks.responsive}</dd></div><div><dt>Interaction</dt><dd>${state.verification.checks.interaction}</dd></div></dl></section>`}
+    function runHistoryInspector(){return `<section class="inspect-section"><h3>RUN HISTORY</h3><div class="run-history-list">${state.runHistory.map(x=>`<button class="history-row-v14 control-reset ${x.status==='current'?'current':''}"><span class="mono">${x.time}</span><span class="history-marker"></span><span><strong>${esc(x.title)}</strong><small>${esc(x.detail)}</small></span><span>${x.status}</span></button>`).join('')}</div></section>`}
+    function workerInspector(w,tab){
+      if(tab==='prompt')return `<section class="inspect-section"><div class="runtime-event-header"><div><h3>WORKER PROMPT</h3><span class="provenance ${w.userOverrides.includes('prompt')?'user':''}">${w.userOverrides.includes('prompt')?'User override':'Generated by ORCH-01'} · v${w.promptVersion}</span></div>${v14Button('Open Prompt Studio',`data-open-prompt="${w.workerId}"`,'primary-btn')}</div><pre class="diff" style="margin-top:12px">${esc(w.prompt.slice(0,620))}${w.prompt.length>620?'\n…':''}</pre></section>`;
+      if(tab==='permissions')return `<section class="inspect-section"><h3>PERMISSION POLICY</h3>${Object.entries(w.permissions).map(([k,v])=>`<div class="setting-row"><div><strong>${k}</strong><span class="provenance ${w.lockedFields.includes('permissions')?'user':''}">${w.lockedFields.includes('permissions')?'LOCKED BY USER':'Generated by Orchestrator'}</span></div><button class="ghost-btn" data-permission="${k}">${v}</button></div>`).join('')}</section>`;
+      if(tab==='tools')return `<section class="inspect-section"><h3>TOOLS &amp; SKILLS</h3><dl class="definition"><div><dt>Tools</dt><dd>${w.tools.join(' · ')}</dd></div><div><dt>Skills</dt><dd>${w.skills.join(' · ')}</dd></div><div><dt>Selection reason</dt><dd>Required for ${w.phase} · selected by ORCH-01</dd></div></dl></section>`;
+      if(tab==='context')return `<section class="inspect-section"><h3>INPUT CONTEXT</h3>${w.inputContext.map(x=>`<button class="interactive-row control-reset context-row"><span class="item-main"><strong class="item-title">${esc(x)}</strong><span class="item-description">Included · ${esc(w.contextPolicy)}</span></span><span class="status complete">Included</span></button>`).join('')}</section>`;
+      if(tab==='output')return `<section class="inspect-section"><h3>OUTPUT CONTRACT</h3><dl class="definition"><div><dt>Artifact</dt><dd class="mono">${w.expectedOutput}</dd></div><div><dt>Schema</dt><dd>${w.outputSchema}</dd></div><div><dt>Completion</dt><dd>${w.completionCriteria}</dd></div><div><dt>Evidence</dt><dd>${state.verification.status}</dd></div></dl></section>`;
+      if(tab==='runtime')return traceLens(w);
+      if(tab==='history')return `<section class="inspect-section"><h3>CHANGE HISTORY</h3><div class="run-history-list"><button class="history-row-v14 control-reset"><span class="mono">10:08</span><span class="history-marker"></span><span><strong>Prompt v${w.promptVersion}</strong><small>${w.updatedBy} · structured update</small></span><span>current</span></button><button class="history-row-v14 control-reset"><span class="mono">10:04</span><span class="history-marker"></span><span><strong>Worker created</strong><small>${w.createdBy} · ${w.phase}</small></span><span>saved</span></button></div></section>`;
+      return `<section class="inspect-section"><h3>ASSIGNMENT</h3><dl class="definition"><div><dt>Role</dt><dd>${w.role}</dd></div><div><dt>Objective</dt><dd>${w.objective}</dd></div><div><dt>Task</dt><dd>${w.task}</dd></div><div><dt>Phase</dt><dd>${w.phase}</dd></div><div><dt>Model</dt><dd>${w.model} ${w.lockedFields.includes('model')?'<span class="provenance user">LOCKED BY USER</span>':''}</dd></div><div><dt>Execution</dt><dd>${w.status}</dd></div><div><dt>Runtime health</dt><dd>${w.runtimeHealth}</dd></div></dl></section>`
+    }
+    function renderReview(){
+      const pane=$('#review');if(!state.selected){pane.setAttribute('aria-hidden','true');return}pane.setAttribute('aria-hidden','false');
+      const id=state.selected;
+      if(id==='interrupt'){$('#reviewTitle').textContent='Approval Request';$('#reviewTabs').innerHTML='';$('#reviewBody').innerHTML=interruptInspector();return}
+      if(id==='history'){$('#reviewTitle').textContent='Run History';$('#reviewTabs').innerHTML='';$('#reviewBody').innerHTML=runHistoryInspector();return}
+      if(String(id).startsWith('artifact:')){const name=id.slice(9);$('#reviewTitle').textContent='Artifact Review';$('#reviewTabs').innerHTML='';$('#reviewBody').innerHTML=artifactInspector(name);return}
+      const w=state.workers[id];$('#reviewTitle').textContent=id==='ORCH-01'?'Orchestrator Inspector':`${id} · Worker Inspector`;
+      const tabs=id==='ORCH-01'?['overview','plan','strategy','runtime','history']:['overview','prompt','context','tools','permissions','output','runtime','history'];
+      $('#reviewTabs').innerHTML=tabs.map(t=>`<button class="${state.inspectorTab===t?'active':''}" data-inspect-tab="${t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join('');
+      if(id==='ORCH-01')$('#reviewBody').innerHTML=orchestratorInspector();else $('#reviewBody').innerHTML=`${contextualActions('worker',id)}${state.inspectorTab==='runtime'?traceLens(w):workerInspector(w,state.inspectorTab)}`;
+    }
+    function renderHeader(){const orch=state.activeView==='orchestration';$('#headerTitle').textContent=orch?'LunaScope / Orchestration':'LunaScope / Unified Agent Workbench';$('#runStatus').className=`status ${state.runStatus}`;$('#runStatus').textContent=state.runStatus==='running'?'运行中':state.runStatus==='paused'?'已暂停':state.runStatus==='complete'?'已完成':state.runStatus==='stopped'?'已停止':state.runStatus==='interrupted'?'等待审批':'未运行';document.body.classList.toggle('run-paused',state.runStatus==='paused')}
+    function renderStatus(){const english=document.documentElement.dataset.uiLanguage==='english',activity=executionActivity;if(activity){const worker=activity.workerId?`${activity.workerId} · `:'';$('#statusText').textContent=`${worker}${activity.role} · ${activity.state} · ${activity.detail}`;$('#statusText').classList.toggle('run-attention',Boolean(activity.running))}else{$('#statusText').textContent=english?'No active run':'尚无运行';$('#statusText').classList.remove('run-attention')}$('#approvalStatus').textContent=english?'No pending approvals':'无待处理审批';$('#approvalStatus').classList.remove('run-attention');$('#themeToggle').textContent=state.theme==='light'?(english?'Dark':'深色'):(english?'Light':'浅色');document.body.classList.toggle('console-open',state.console);$('#consoleOutput').textContent=''}
+    function renderTabs(){const hide=['memory','integrations','settings'].includes(state.activeView),remaining=Math.max(0,state.changesReview.total-state.changesReview.accepted),english=document.documentElement.dataset.uiLanguage==='english';$('.workspace').classList.toggle('special-view',hide);$('#tabs').classList.toggle('hidden',hide);$('#composer').classList.toggle('hidden',hide||state.activeView!=='conversation');const items=english?[['conversation','Conversation'],['orchestration','Orchestration'],['plan','Plan'],['changes','Changes'],['agents','Workers'],['artifacts','Artifacts']]:[['conversation','对话'],['orchestration','编排'],['plan','计划'],['changes','变更'],['agents','子 Agent'],['artifacts','交付物']];$('#tabs').innerHTML=items.map(([id,label])=>`<button class="tab ${state.activeView===id?'active':''}" role="tab" aria-selected="${state.activeView===id}" data-view="${id}">${label}${id==='changes'&&remaining?`<span class="badge">· ${remaining}</span>`:''}</button>`).join('')}
+    function renderSidebar(){const attention=runtimeSelectors.attention()>0||!state.changesReview.reviewed,english=document.documentElement.dataset.uiLanguage==='english';$('#threadList').innerHTML=threads.map(t=>{const hasAttention=t.id==='rebuild'?attention:t.attention,label=english?`Delete ${t.title}`:`删除 ${t.title}`;return `<div class="thread-row"><button class="thread ${t.id===state.activeThread&&!['memory','integrations','settings'].includes(state.activeView)?'active':''}" data-thread="${t.id}"><span class="dot ${t.status}"></span><span class="thread-main"><strong>${esc(t.title)}</strong><small>${esc(t.time)}</small></span>${hasAttention?'<i class="attention"></i>':''}</button><button class="thread-delete" type="button" data-delete-thread="${esc(t.id)}" aria-label="${esc(label)}" title="${esc(label)}">×</button></div>`}).join('')}
+
+    function handleV14Click(e){
+      const b=e.target.closest('[data-v14],[data-plan-edit],[data-add-worker]');if(!b)return;e.preventDefault();e.stopImmediatePropagation();
+      if(b.hasAttribute('data-plan-edit')){state.pendingPatch={worker:'PLAN-14',field:'Owner',from:'WK-03',to:'ORCH-01 + WK-03',summary:'Plan owner changed',impact:['No worker restart','Plan version increments','Conversation receives PLAN_UPDATED']};save();return showPatch()}
+      if(b.hasAttribute('data-add-worker')){state.pendingPatch={worker:'WK-05',field:'Worker',from:'—',to:'Reviewer Worker',summary:'Add bounded review worker',impact:['Graph version increments','Estimated cost +8%','Verification phase gains one dependency']};save();return showPatch()}
+      const a=b.dataset.v14;
+      if(a==='toggle-lens'){state.lensExpanded=!state.lensExpanded;save();renderView();return}
+      if(a==='toggle-complete'){state.showCompleteWorkers=!state.showCompleteWorkers;save();renderView();return}
+      if(a==='toggle-run'){runtimeAdapter.dispatch({type:state.runStatus==='running'?'RUN_PAUSED':'RUN_RESUMED',title:state.runStatus==='running'?'Run paused':'Run resumed',summary:'User control'});return}
+      if(a==='review-interrupt'){state.selected='interrupt';save();render();return}
+      if(a==='allow-once'||a==='allow-run'){runtimeAdapter.resume(a==='allow-once'?'allow-once':'allow-run');return}
+      if(a==='reject-interrupt'){state.interrupt.rejecting=true;save();renderView();return}
+      if(a==='confirm-reject'){runtimeAdapter.resume('reject');return}
+      if(a==='checkpoint'){runtimeAdapter.dispatch({type:'CHECKPOINT_CREATED',title:'Checkpoint created',summary:'CP-0317-03 · Run and workspace state saved'});return}
+      if(a==='stop-run'){runtimeAdapter.dispatch({type:'RUN_STOPPED',title:'Run stopped',summary:'Worker processes stopped · outputs preserved'});return}
+      if(a==='run-verification'){runtimeAdapter.dispatch({type:'VERIFICATION_UPDATED',title:'Verification started',summary:'Responsive · interaction · accessibility checks',payload:{status:'running',checks:{responsive:'running',interaction:'queued',accessibility:'queued'}}});setTimeout(()=>runtimeAdapter.dispatch({type:'VERIFICATION_UPDATED',title:'Verification completed',summary:'3 / 3 checks passed',payload:{status:'passed',checks:{responsive:'passed',interaction:'passed',accessibility:'passed'}}}),900);return}
+      if(a==='select-file'){state.activeFile=b.dataset.file;state.mobileDiffOpen=true;save();renderView();return}
+      if(a==='close-mobile-diff'){state.mobileDiffOpen=false;save();renderView();return}
+      if(a==='accept-change'){runtimeAdapter.dispatch({type:'PATCH_APPLIED',title:'File accepted',summary:`${state.activeFile} · review state updated`,payload:{file:state.activeFile}});return}
+      if(a==='revert-change'){runtimeAdapter.dispatch({type:'PATCH_REJECTED',title:'Change reverted',summary:`${state.activeFile} restored from CP-0317-02`,payload:{file:state.activeFile}});return}
+      if(a==='run-history'){state.selected='history';save();render();return}
+      if(a==='review-artifact'){state.selected=`artifact:${b.dataset.artifact}`;save();render();return}
+      if(a==='toggle-worker'){const w=state.workers[state.selected];if(w)runtimeAdapter.dispatch({type:'WORKER_STATE_CHANGED',title:`${w.workerId} ${w.status==='running'?'paused':'resumed'}`,summary:w.task,payload:{workerId:w.workerId,status:w.status==='running'?'paused':'running'}});return}
+      if(a==='edit-scope'){toast('Scope editor opened in review context');return}
+    }
+    function bindV14(){
+      document.addEventListener('click',handleV14Click,true);
+      $('#newTask').onclick=()=>{persistActiveConversation();const id=`thread-${Date.now()}`;threads.unshift({id,title:'等待首条消息',time:'刚刚',status:'waiting',attention:false,projectId:null,runId:null});state.activeThread=id;state.activeView='conversation';state.events=[];save();route('conversation')};
+      $('#moreMenu').onclick=()=>{state.selected='history';save();render()};
+      $('#projectSwitch').onclick=()=>{state.selected='ORCH-01';state.inspectorTab='overview';save();render()};
+      $$('[data-composer]').forEach(btn=>btn.onclick=()=>{const kind=btn.dataset.composer,input=$('#composerInput');if(kind==='attach'){if(!state.attachments.includes('scope-contract.md'))state.attachments.push('scope-contract.md');renderComposerState();save()}if(kind==='context'){input.value+=`${input.value?' ':''}@workspace `;input.focus()}if(kind==='command'){input.value+=`${input.value?' ':''}/checkpoint `;input.focus()}});
+      $('#rewritePrompt').onclick=()=>{const id=$('#promptEditor').dataset.worker,w=state.workers[id];$('#promptEditor').value=`${workerPrompt(w.role,w.objective,w.expectedOutput)}\n\nREVISION NOTE\nPrefer deterministic, evidence-first execution.`;$('#promptOrigin').textContent='Candidate rewrite by ORCH-01';$('#promptOrigin').className='provenance'};
+      $('#comparePrompt').onclick=()=>{const editor=$('#promptEditor');editor.classList.toggle('diff-mode');$('#comparePrompt').textContent=editor.classList.contains('diff-mode')?'退出比较':'比较'};
+      $('#lockPrompt').onclick=()=>{const id=$('#promptEditor').dataset.worker,w=state.workers[id],locked=w.lockedFields.includes('prompt');w.lockedFields=locked?w.lockedFields.filter(x=>x!=='prompt'):[...w.lockedFields,'prompt'];$('#lockPrompt').textContent=locked?'锁定字段':'已锁定';save()};
+      renderComposerState();
+    }
+    function bindConversationScroll(){
+      const view=$('#view');
+      view.addEventListener('scroll',()=>{
+        if(state.activeView!=='conversation'||conversationScroll.programmatic)return;
+        conversationScroll.pinned=view.scrollHeight-view.scrollTop-view.clientHeight<96
+      },{passive:true});
+    }
+    function renderComposerState(){const box=$('#composer .composer-box');if(!box)return;box.querySelector('.composer-attachments')?.remove();if(!state.attachments.length)return;box.insertAdjacentHTML('afterbegin',`<div class="composer-attachments">${state.attachments.map(x=>`<span class="attachment-chip">FILE · ${esc(x)}</span>`).join('')}</div>`)}
+
+    bindConversationScroll();bind();bindV14();syncRoute();
+  })();
+  </script>
+  <script type="module" src="/apps/desktop/src/runtime-native.ts"></script>
+</body>
+</html>

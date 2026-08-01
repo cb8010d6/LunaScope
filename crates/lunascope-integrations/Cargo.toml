@@ -1,0 +1,21 @@
+[package]
+name = "lunascope-integrations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+futures-util.workspace = true
+keyring.workspace = true
+lunascope-core = { path = "../lunascope-core" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true

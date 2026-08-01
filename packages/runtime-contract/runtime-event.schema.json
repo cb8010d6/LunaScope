@@ -1,0 +1,2382 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EventEnvelope",
+  "type": "object",
+  "properties": {
+    "eventId": {
+      "$ref": "#/$defs/EventId"
+    },
+    "sequence": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "timestamp": {
+      "description": "RFC 3339 UTC timestamp.",
+      "type": "string"
+    },
+    "projectId": {
+      "$ref": "#/$defs/ProjectId"
+    },
+    "threadId": {
+      "$ref": "#/$defs/ThreadId"
+    },
+    "runId": {
+      "$ref": "#/$defs/RunId"
+    },
+    "orchestrationId": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OrchestrationId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "workerId": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WorkerId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "correlationId": {
+      "$ref": "#/$defs/CorrelationId"
+    },
+    "causationId": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EventId"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "eventType": {
+      "$ref": "#/$defs/EventType"
+    },
+    "source": {
+      "$ref": "#/$defs/EventSource"
+    },
+    "payload": {
+      "$ref": "#/$defs/EventData"
+    },
+    "risk": {
+      "$ref": "#/$defs/RiskLevel"
+    },
+    "redactionState": {
+      "$ref": "#/$defs/RedactionState"
+    }
+  },
+  "required": [
+    "eventId",
+    "sequence",
+    "schemaVersion",
+    "timestamp",
+    "projectId",
+    "threadId",
+    "runId",
+    "correlationId",
+    "eventType",
+    "source",
+    "payload",
+    "risk",
+    "redactionState"
+  ],
+  "$defs": {
+    "EventId": {
+      "type": "string"
+    },
+    "ProjectId": {
+      "type": "string"
+    },
+    "ThreadId": {
+      "type": "string"
+    },
+    "RunId": {
+      "type": "string"
+    },
+    "OrchestrationId": {
+      "type": "string"
+    },
+    "WorkerId": {
+      "type": "string"
+    },
+    "CorrelationId": {
+      "type": "string"
+    },
+    "EventType": {
+      "type": "string",
+      "enum": [
+        "run_created",
+        "run_state_changed",
+        "plan_updated",
+        "orchestration_decided",
+        "orchestration_created",
+        "worker_created",
+        "worker_removed",
+        "worker_state_changed",
+        "model_stream_chunk",
+        "reasoning_summary_recorded",
+        "agent_plan_updated",
+        "model_routing_decided",
+        "model_usage_recorded",
+        "tool_call_requested",
+        "tool_call_completed",
+        "approval_requested",
+        "approval_resolved",
+        "handoff_recorded",
+        "orchestration_patched",
+        "artifact_recorded",
+        "checkpoint_created",
+        "context_compacted",
+        "verification_recorded",
+        "run_completed",
+        "run_failed"
+      ]
+    },
+    "EventSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "user"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "system"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "orchestrator"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "worker"
+            },
+            "id": {
+              "$ref": "#/$defs/WorkerId"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "tool"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "mcp"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "bridge"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ]
+        }
+      ]
+    },
+    "EventData": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "run_created"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "initial_prompt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "title",
+                "initial_prompt"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "run_state_changed"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "$ref": "#/$defs/RunState"
+                },
+                "to": {
+                  "$ref": "#/$defs/RunState"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "from",
+                "to",
+                "reason"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "plan_updated"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "markdown": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "version",
+                "markdown"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "orchestration_decided"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "decision": {
+                  "type": "string"
+                },
+                "rationale": {
+                  "type": "string"
+                },
+                "estimated_cost": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "decision",
+                "rationale"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "orchestration_created"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "plan": {
+                  "$ref": "#/$defs/OrchestrationPlan"
+                }
+              },
+              "required": [
+                "plan"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "worker_created"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "spec": {
+                  "$ref": "#/$defs/WorkerSpec"
+                }
+              },
+              "required": [
+                "spec"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "worker_removed"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "worker_id": {
+                  "$ref": "#/$defs/WorkerId"
+                },
+                "from": {
+                  "$ref": "#/$defs/WorkerState"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "worker_id",
+                "from",
+                "reason"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "worker_state_changed"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "worker_id": {
+                  "$ref": "#/$defs/WorkerId"
+                },
+                "from": {
+                  "$ref": "#/$defs/WorkerState"
+                },
+                "to": {
+                  "$ref": "#/$defs/WorkerState"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "worker_id",
+                "from",
+                "to",
+                "reason"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "model_stream_chunk"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "worker_id": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/WorkerId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "stream_id": {
+                  "type": "string"
+                },
+                "index": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "stream_id",
+                "index",
+                "text"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "reasoning_summary_recorded"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "worker_id": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/WorkerId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "record": {
+                  "$ref": "#/$defs/ReasoningSummaryRecord"
+                }
+              },
+              "required": [
+                "record"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "agent_plan_updated"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "worker_id": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/WorkerId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "plan": {
+                  "$ref": "#/$defs/AgentPlan"
+                }
+              },
+              "required": [
+                "plan"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "model_routing_decided"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "decision": {
+                  "$ref": "#/$defs/ModelRoutingDecision"
+                }
+              },
+              "required": [
+                "decision"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "model_usage_recorded"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "usage": {
+                  "$ref": "#/$defs/ModelUsageRecord"
+                }
+              },
+              "required": [
+                "usage"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "tool_call_requested"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "worker_id": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/WorkerId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "call": {
+                  "$ref": "#/$defs/ToolCall"
+                }
+              },
+              "required": [
+                "call"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "tool_call_completed"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "worker_id": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/WorkerId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "result": {
+                  "$ref": "#/$defs/ToolResult"
+                }
+              },
+              "required": [
+                "result"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "approval_requested"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "worker_id": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/WorkerId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "request": {
+                  "$ref": "#/$defs/ApprovalRequest"
+                }
+              },
+              "required": [
+                "request"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "approval_resolved"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "resolution": {
+                  "$ref": "#/$defs/ApprovalResolution"
+                }
+              },
+              "required": [
+                "resolution"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "handoff_recorded"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                },
+                "artifact_ids": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/ArtifactId"
+                  }
+                },
+                "summary": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "from",
+                "to",
+                "artifact_ids",
+                "summary"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "orchestration_patched"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "patch": {
+                  "$ref": "#/$defs/OrchestrationPatch"
+                },
+                "plan": {
+                  "$ref": "#/$defs/OrchestrationPlan"
+                }
+              },
+              "required": [
+                "patch",
+                "plan"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "artifact_recorded"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "artifact": {
+                  "$ref": "#/$defs/ArtifactRecord"
+                }
+              },
+              "required": [
+                "artifact"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "checkpoint_created"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "checkpoint": {
+                  "$ref": "#/$defs/CheckpointRecord"
+                }
+              },
+              "required": [
+                "checkpoint"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "context_compacted"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "previous_tokens": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "resulting_tokens": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "summary_artifact_id": {
+                  "$ref": "#/$defs/ArtifactId"
+                }
+              },
+              "required": [
+                "previous_tokens",
+                "resulting_tokens",
+                "summary_artifact_id"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "verification_recorded"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "verification": {
+                  "$ref": "#/$defs/VerificationRecord"
+                }
+              },
+              "required": [
+                "verification"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "run_completed"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "completion": {
+                  "$ref": "#/$defs/CompletionKind"
+                },
+                "verification": {
+                  "$ref": "#/$defs/VerificationStatus"
+                },
+                "summary": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "completion",
+                "verification",
+                "summary"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "run_failed"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "recoverable": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "code",
+                "message",
+                "recoverable"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        }
+      ]
+    },
+    "RunState": {
+      "type": "string",
+      "enum": [
+        "created",
+        "planning",
+        "awaiting_user",
+        "running",
+        "pausing",
+        "paused",
+        "waiting_approval",
+        "compacting",
+        "verifying",
+        "synthesizing",
+        "completed",
+        "partially_completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "OrchestrationPlan": {
+      "type": "object",
+      "properties": {
+        "orchestrationId": {
+          "$ref": "#/$defs/OrchestrationId"
+        },
+        "version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "objective": {
+          "type": "string"
+        },
+        "projectId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProjectId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "threadId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThreadId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "conversationTitle": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "domainPack": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DomainPackId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "decision": {
+          "$ref": "#/$defs/DelegationDecision"
+        },
+        "maximumParallelWorkers": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "maximumWorkerDepth": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "parentPermissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowedWorkerModels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AllowedWorkerModel"
+          }
+        },
+        "userHardConstraints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "workers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkerSpec"
+          }
+        },
+        "userOverrides": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UserOverrideRecord"
+          }
+        }
+      },
+      "required": [
+        "orchestrationId",
+        "version",
+        "objective",
+        "decision",
+        "maximumParallelWorkers",
+        "maximumWorkerDepth",
+        "parentPermissions",
+        "allowedWorkerModels",
+        "userHardConstraints",
+        "workers",
+        "userOverrides"
+      ]
+    },
+    "DomainPackId": {
+      "type": "string",
+      "enum": [
+        "programming",
+        "game_development",
+        "research",
+        "academic_writing",
+        "frontend_design"
+      ]
+    },
+    "DelegationDecision": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/DelegationKind"
+        },
+        "rationale": {
+          "type": "string"
+        },
+        "expectedBenefit": {
+          "type": "string"
+        },
+        "estimatedDuration": {
+          "type": "string"
+        },
+        "estimatedCost": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "rationale",
+        "expectedBenefit",
+        "estimatedDuration",
+        "estimatedCost"
+      ]
+    },
+    "DelegationKind": {
+      "type": "string",
+      "enum": [
+        "single_agent",
+        "multi_agent"
+      ]
+    },
+    "AllowedWorkerModel": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "model"
+      ]
+    },
+    "WorkerSpec": {
+      "type": "object",
+      "properties": {
+        "workerId": {
+          "$ref": "#/$defs/WorkerId"
+        },
+        "role": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "objective": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "inputContext": {
+          "$ref": "#/$defs/WorkerInputContext"
+        },
+        "expectedOutput": {
+          "type": "string"
+        },
+        "outputSchema": {
+          "$ref": "#/$defs/WorkerOutputSchema"
+        },
+        "completionCriteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "model": {
+          "$ref": "#/$defs/ModelSelection"
+        },
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "budget": {
+          "$ref": "#/$defs/WorkerBudget"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkerId"
+          }
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "retryPolicy": {
+          "$ref": "#/$defs/RetryPolicy"
+        },
+        "checkpointPolicy": {
+          "$ref": "#/$defs/WorkerCheckpointPolicy"
+        },
+        "writeScopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lockedFields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkerField"
+          }
+        },
+        "parentWorkerId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depth": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "workerId",
+        "role",
+        "objective",
+        "task",
+        "prompt",
+        "inputContext",
+        "expectedOutput",
+        "outputSchema",
+        "completionCriteria",
+        "model",
+        "skills",
+        "tools",
+        "permissions",
+        "budget",
+        "dependencies",
+        "timeoutMs",
+        "retryPolicy",
+        "checkpointPolicy",
+        "writeScopes",
+        "lockedFields",
+        "depth"
+      ]
+    },
+    "WorkerInputContext": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "artifactIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArtifactId"
+          }
+        },
+        "includeWorkspaceSnapshot": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "summary",
+        "artifactIds",
+        "includeWorkspaceSnapshot"
+      ]
+    },
+    "ArtifactId": {
+      "type": "string"
+    },
+    "WorkerOutputSchema": {
+      "type": "object",
+      "properties": {
+        "mediaType": {
+          "type": "string"
+        },
+        "schema": true
+      },
+      "required": [
+        "mediaType",
+        "schema"
+      ]
+    },
+    "ModelSelection": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "fallback": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "reason",
+        "fallback"
+      ]
+    },
+    "WorkerBudget": {
+      "type": "object",
+      "properties": {
+        "maximumInputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "maximumOutputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "maximumCostMicrousd": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      }
+    },
+    "RetryPolicy": {
+      "type": "object",
+      "properties": {
+        "maximumAttempts": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "backoffMs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "retryableErrorCodes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "maximumAttempts",
+        "backoffMs",
+        "retryableErrorCodes"
+      ]
+    },
+    "WorkerCheckpointPolicy": {
+      "type": "object",
+      "properties": {
+        "onStart": {
+          "type": "boolean"
+        },
+        "onArtifact": {
+          "type": "boolean"
+        },
+        "onCompletion": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "onStart",
+        "onArtifact",
+        "onCompletion"
+      ]
+    },
+    "WorkerField": {
+      "type": "string",
+      "enum": [
+        "role",
+        "tags",
+        "objective",
+        "task",
+        "prompt",
+        "input_context",
+        "expected_output",
+        "output_schema",
+        "completion_criteria",
+        "model",
+        "skills",
+        "tools",
+        "permissions",
+        "budget",
+        "dependencies",
+        "timeout",
+        "retry_policy",
+        "checkpoint_policy",
+        "write_scopes",
+        "parent_worker"
+      ]
+    },
+    "UserOverrideRecord": {
+      "type": "object",
+      "properties": {
+        "patchId": {
+          "type": "string"
+        },
+        "workerId": {
+          "$ref": "#/$defs/WorkerId"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkerField"
+          }
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "patchId",
+        "workerId",
+        "fields",
+        "reason"
+      ]
+    },
+    "WorkerState": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "ready",
+        "queued",
+        "running_model",
+        "waiting_tool_approval",
+        "running_tool",
+        "waiting_dependency",
+        "waiting_handoff",
+        "paused",
+        "compacting",
+        "verifying",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "ReasoningSummaryRecord": {
+      "type": "object",
+      "properties": {
+        "itemId": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/ReasoningSummarySource"
+        },
+        "summary": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "itemId",
+        "source",
+        "summary"
+      ]
+    },
+    "ReasoningSummarySource": {
+      "oneOf": [
+        {
+          "description": "A summary item emitted by the Provider's reasoning-summary protocol.",
+          "type": "string",
+          "const": "provider"
+        },
+        {
+          "description": "Model-authored commentary or a progress tool call. This is not hidden chain-of-thought.",
+          "type": "string",
+          "const": "model_commentary"
+        }
+      ]
+    },
+    "AgentPlan": {
+      "type": "object",
+      "properties": {
+        "explanation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AgentPlanStep"
+          }
+        }
+      },
+      "required": [
+        "steps"
+      ]
+    },
+    "AgentPlanStep": {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/AgentPlanStepStatus"
+        }
+      },
+      "required": [
+        "step",
+        "status"
+      ]
+    },
+    "AgentPlanStepStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_progress",
+        "completed"
+      ]
+    },
+    "ModelRoutingDecision": {
+      "type": "object",
+      "properties": {
+        "providerConfigId": {
+          "type": "string"
+        },
+        "modelId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "fallback": {
+          "type": "boolean"
+        },
+        "estimatedCostMicrousd": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "requiresCostApproval": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "providerConfigId",
+        "modelId",
+        "reason",
+        "fallback",
+        "estimatedCostMicrousd",
+        "requiresCostApproval"
+      ]
+    },
+    "ModelUsageRecord": {
+      "type": "object",
+      "properties": {
+        "providerConfigId": {
+          "type": "string"
+        },
+        "modelId": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/ModelRole"
+        },
+        "inputTokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "totalCostMicrousd": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "fallbackFrom": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "providerConfigId",
+        "modelId",
+        "role",
+        "inputTokens",
+        "outputTokens"
+      ]
+    },
+    "ModelRole": {
+      "type": "string",
+      "enum": [
+        "orchestration",
+        "general_worker",
+        "programming",
+        "research",
+        "writing",
+        "frontend",
+        "game_development",
+        "reviewer",
+        "verifier",
+        "fast_cheap",
+        "vision"
+      ]
+    },
+    "ToolCall": {
+      "type": "object",
+      "properties": {
+        "callId": {
+          "type": "string"
+        },
+        "toolId": {
+          "type": "string"
+        },
+        "input": true,
+        "idempotencyKey": {
+          "type": "string"
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "callId",
+        "toolId",
+        "input",
+        "idempotencyKey",
+        "timeoutMs"
+      ]
+    },
+    "ToolResult": {
+      "type": "object",
+      "properties": {
+        "callId": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "output": true,
+        "errorCode": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "durationMs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "callId",
+        "success",
+        "output",
+        "durationMs"
+      ]
+    },
+    "ApprovalRequest": {
+      "type": "object",
+      "properties": {
+        "approvalId": {
+          "type": "string"
+        },
+        "callId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "action": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scope": {
+          "type": "string"
+        },
+        "blastRadius": {
+          "type": "string"
+        },
+        "rollback": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "approvalId",
+        "action",
+        "reason",
+        "permissions",
+        "scope",
+        "blastRadius",
+        "rollback"
+      ]
+    },
+    "ApprovalResolution": {
+      "type": "object",
+      "properties": {
+        "approvalId": {
+          "type": "string"
+        },
+        "decision": {
+          "$ref": "#/$defs/PermissionDecision"
+        },
+        "instructions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "approvalId",
+        "decision"
+      ]
+    },
+    "PermissionDecision": {
+      "type": "string",
+      "enum": [
+        "allow_once",
+        "allow_for_run",
+        "allow_for_scope",
+        "reject"
+      ]
+    },
+    "OrchestrationPatch": {
+      "type": "object",
+      "properties": {
+        "patchId": {
+          "type": "string"
+        },
+        "baseVersion": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "applyMode": {
+          "$ref": "#/$defs/OrchestrationPatchApplyMode"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OrchestrationPatchOperation"
+          }
+        }
+      },
+      "required": [
+        "patchId",
+        "baseVersion",
+        "applyMode",
+        "reason",
+        "operations"
+      ]
+    },
+    "OrchestrationPatchApplyMode": {
+      "type": "string",
+      "enum": [
+        "apply_now",
+        "apply_after_current_step",
+        "apply_on_retry",
+        "clone_revision",
+        "cancel"
+      ]
+    },
+    "OrchestrationPatchOperation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "add_worker"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "spec": {
+                  "$ref": "#/$defs/WorkerSpec"
+                }
+              },
+              "required": [
+                "spec"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "update_worker"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "patch": {
+                  "$ref": "#/$defs/WorkerPatch"
+                }
+              },
+              "required": [
+                "patch"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "remove_worker"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "worker_id": {
+                  "$ref": "#/$defs/WorkerId"
+                }
+              },
+              "required": [
+                "worker_id"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        }
+      ]
+    },
+    "WorkerPatch": {
+      "type": "object",
+      "properties": {
+        "workerId": {
+          "$ref": "#/$defs/WorkerId"
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "objective": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prompt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "inputContext": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerInputContext"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expectedOutput": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outputSchema": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerOutputSchema"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "completionCriteria": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelSelection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skills": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "tools": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "permissions": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "budget": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerBudget"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dependencies": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/WorkerId"
+          }
+        },
+        "timeoutMs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "retryPolicy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetryPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checkpointPolicy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerCheckpointPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "writeScopes": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "parentWorkerId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lockFields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkerField"
+          }
+        },
+        "unlockFields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkerField"
+          }
+        }
+      },
+      "required": [
+        "workerId",
+        "lockFields",
+        "unlockFields"
+      ]
+    },
+    "ArtifactRecord": {
+      "type": "object",
+      "properties": {
+        "artifactId": {
+          "$ref": "#/$defs/ArtifactId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "mediaType": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "createdBy": {
+          "$ref": "#/$defs/EventSource"
+        }
+      },
+      "required": [
+        "artifactId",
+        "name",
+        "mediaType",
+        "path",
+        "sha256",
+        "createdBy"
+      ]
+    },
+    "CheckpointRecord": {
+      "type": "object",
+      "properties": {
+        "checkpointId": {
+          "$ref": "#/$defs/CheckpointId"
+        },
+        "eventSequence": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string"
+        },
+        "artifactIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ArtifactId"
+          }
+        }
+      },
+      "required": [
+        "checkpointId",
+        "eventSequence",
+        "reason",
+        "artifactIds"
+      ]
+    },
+    "CheckpointId": {
+      "type": "string"
+    },
+    "VerificationRecord": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/VerificationStatus"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "remainingRisks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "criterionResults": {
+          "description": "Criterion-level acceptance evidence. Older stored events remain readable,\nbut a live Verifier must cover the current plan's complete AC contract.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CriterionVerification"
+          },
+          "default": []
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/VerificationFinding"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "status",
+        "summary",
+        "evidence",
+        "remainingRisks"
+      ]
+    },
+    "VerificationStatus": {
+      "type": "string",
+      "enum": [
+        "verified",
+        "partially_verified",
+        "unverified",
+        "unable_to_verify",
+        "failed_verification"
+      ]
+    },
+    "CriterionVerification": {
+      "type": "object",
+      "properties": {
+        "criterionId": {
+          "description": "Stable identifier from the task-wide contract, for example `AC-3`.",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/CriterionVerificationStatus"
+        },
+        "evidence": {
+          "description": "Direct observations supporting this one criterion. A global summary is not\naccepted as evidence for an individual passed criterion.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "criterionId",
+        "status",
+        "note"
+      ]
+    },
+    "CriterionVerificationStatus": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "unverified"
+      ]
+    },
+    "VerificationFinding": {
+      "type": "object",
+      "properties": {
+        "severity": {
+          "$ref": "#/$defs/VerificationSeverity"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "affectedPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "repairHint": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "severity",
+        "title",
+        "description",
+        "repairHint"
+      ]
+    },
+    "VerificationSeverity": {
+      "type": "string",
+      "enum": [
+        "fatal",
+        "major",
+        "minor"
+      ]
+    },
+    "CompletionKind": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "partially_completed"
+      ]
+    },
+    "RiskLevel": {
+      "type": "string",
+      "enum": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "RedactionState": {
+      "type": "string",
+      "enum": [
+        "not_required",
+        "redacted",
+        "contains_sensitive_data"
+      ]
+    }
+  }
+}

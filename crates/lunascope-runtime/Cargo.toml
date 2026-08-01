@@ -1,0 +1,28 @@
+[package]
+name = "lunascope-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+base64.workspace = true
+lunascope-core = { path = "../lunascope-core" }
+lunascope-storage = { path = "../lunascope-storage" }
+jiff.workspace = true
+futures-util.workspace = true
+flate2.workspace = true
+process-wrap.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tar.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

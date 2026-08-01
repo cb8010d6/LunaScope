@@ -1,0 +1,2 @@
+d87caee3962202d8ff0066ab9e5a9f5bc11dcf7d24878f6daf5bb08a471c4d6b  lunascope-desktop.exe
+00f74f0c8c677bc31106b2ae36c40d21b6a53600b820ab5b52f7471ea6fb868e  LunaScope_0.1.0_x64-setup.exe

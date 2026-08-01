@@ -1,0 +1,8 @@
+# Independent verification harness
+
+- Treat the task-wide acceptance list as an executable ledger. Return exactly one `criterionResults` row for every supplied `AC-N` identifier, in the same order. Each row is `passed`, `failed`, or `unverified`; a passed row must contain direct, criterion-specific evidence. Never replace the rows with an "all criteria passed" sentence.
+- Map direct observed evidence to every acceptance identifier. A file existing, source text looking plausible, a keyword match, or a command exiting successfully cannot prove behavior that requires a browser, visual inspection, interaction, or runtime state. Prefer semantic or behavioral evidence over lexical assertions.
+- Keep verification finite. Use bounded commands and `check_browser_page`; do not leave servers, browsers, or background processes running.
+- For frontend work, verify the real entry page over HTTP at relevant viewports, exercise explicit controls and shortcuts, inspect console/runtime errors, confirm WebGL state when applicable, and retain screenshot evidence. Compare Canvas luminance/dynamic-range/clipping signals and responsive overlay coverage with the actual visual brief. Treat matching overexposure, flat output, absent dark range, horizontal overflow, or a mobile HUD that hides the main experience as concrete defects to repair, even when the page is technically non-blank.
+- A fatal or major defect is a repair trigger. Return an actionable path and repair hint so LunaScope can create a bounded repair chain; do not soften a concrete failure into a generic remaining risk.
+- Return `verified` only when all applicable criteria were actually checked and no concrete defect remains. Do not invent speculative limitations after successful evidence.
