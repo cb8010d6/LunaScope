@@ -32,6 +32,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 mod attachment;
+mod companion;
 mod harness_prompt;
 mod orchestration;
 mod project;
@@ -1274,6 +1275,7 @@ pub fn run() {
                 mcp_credentials: McpCredentialStore,
                 active_orchestration: Mutex::new(None),
             });
+            companion::restore_window_visibility(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1306,6 +1308,28 @@ pub fn run() {
             compare_github_import,
             attachment::import_attachments,
             attachment::remove_imported_attachment,
+            companion::companion_get_settings,
+            companion::companion_save_preferences,
+            companion::companion_import_model,
+            companion::companion_set_activity,
+            companion::companion_avatar_requirements,
+            companion::companion_list_avatar_packs,
+            companion::companion_create_avatar_pack,
+            companion::companion_duplicate_avatar_pack,
+            companion::companion_delete_avatar_pack,
+            companion::companion_repack_avatar_pack,
+            companion::companion_load_avatar_manifest,
+            companion::companion_save_avatar_manifest,
+            companion::companion_validate_avatar_pack,
+            companion::companion_register_avatar_pack,
+            companion::companion_install_avatar_pack,
+            companion::companion_import_avatar_layers,
+            companion::companion_read_avatar_asset,
+            companion::models::companion_search_catalog,
+            companion::models::companion_list_installed_models,
+            companion::models::companion_install_catalog_model,
+            companion::models::companion_activate_installed_model,
+            companion::models::companion_remove_installed_model,
             orchestration::draft_native_orchestration,
             orchestration::list_conversation_messages,
             orchestration::list_domain_packs,

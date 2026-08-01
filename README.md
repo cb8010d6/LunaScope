@@ -38,6 +38,7 @@ The installer is currently unsigned. Windows SmartScreen may therefore ask for c
 - Loads Codex- and Claude-compatible Skills dynamically from a fixed global Skill store.
 - Provides bounded MCP transport, GitHub Skill import, provider routing, pause/resume/cancel, and live guidance replanning.
 - Offers UltraNote projects for course-aware notes, document ingestion, bilingual terminology, interactive HTML notes, Mermaid diagrams, mathematics, and offline PDF output.
+- Offers an optional native desktop companion that imports local Spine 3.8 or Live2D Cubism models, follows Agent task state, provides metadata-only model search/download/install management, and creates editable Avatar Studio drafts without an extra service or bundled character assets.
 
 ## Architecture
 

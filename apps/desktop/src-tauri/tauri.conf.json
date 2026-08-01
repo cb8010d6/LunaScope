@@ -18,13 +18,39 @@
         "minWidth": 920,
         "minHeight": 640,
         "resizable": true
+      },
+      {
+        "label": "companion",
+        "title": "LunaScope Companion",
+        "url": "companion.html",
+        "width": 360,
+        "height": 460,
+        "minWidth": 260,
+        "minHeight": 320,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "shadow": false,
+        "resizable": false,
+        "maximizable": false,
+        "fullscreen": false
       }
     ],
     "security": {
       "capabilities": [
-        "default"
+        "default",
+        "companion"
       ],
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "D:\\LunaScopeData\\companion\\models\\**",
+          "D:\\LunaScopeData\\companion\\runtime\\**"
+        ]
+      }
     }
   },
   "bundle": {
@@ -39,4 +65,3 @@
     ]
   }
 }
-

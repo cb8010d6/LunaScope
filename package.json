@@ -10,8 +10,11 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@pixi-spine/runtime-3.8": "^3.1.2",
     "@tauri-apps/api": "2.11.1",
-    "@tauri-apps/plugin-dialog": "^2.7.2"
+    "@tauri-apps/plugin-dialog": "^2.7.2",
+    "pixi-spine": "^3.1.2",
+    "pixi.js": "^6.5.10"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.11.4",

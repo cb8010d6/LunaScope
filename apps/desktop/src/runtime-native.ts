@@ -1,6 +1,12 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import {
+  handleCompanionSettingsAction,
+  renderCompanionSettings,
+  syncCompanionActivity,
+} from "./companion/host";
+import type { ExecutionActivity } from "./companion/types";
 import type {
   AgentPlan,
   ConversationMessage,
@@ -171,6 +177,11 @@ declare global {
   interface Window {
     lunaScopeUi?: LunaScopeUiBridge;
   }
+}
+
+function setExecutionActivity(activity: ExecutionActivity): void {
+  window.lunaScopeUi?.setExecutionActivity(activity);
+  syncCompanionActivity(activity);
 }
 
 const bootstrapRunId = "run-native-bootstrap";
@@ -891,7 +902,7 @@ async function setNativeRunPaused(paused: boolean): Promise<void> {
   if (!changed && !nativeOrchestrationRunning) return;
   nativeOrchestrationPaused = paused;
   renderNativeRunControls();
-  window.lunaScopeUi?.setExecutionActivity({
+  setExecutionActivity({
     running: true,
     workerId: null,
     role: "LunaScope",
@@ -910,7 +921,7 @@ async function importAttachmentPaths(paths: string[]): Promise<void> {
       tr("浏览器预览不能读取本地附件。", "Browser preview cannot read local attachments."),
     );
   }
-  window.lunaScopeUi?.setExecutionActivity({
+  setExecutionActivity({
     running: true,
     workerId: null,
     role: "LunaScope",
@@ -930,7 +941,7 @@ async function importAttachmentPaths(paths: string[]): Promise<void> {
     );
     renderPendingAttachments();
   } finally {
-    window.lunaScopeUi?.setExecutionActivity({
+    setExecutionActivity({
       running: false,
       workerId: null,
       role: "LunaScope",
@@ -1190,7 +1201,7 @@ function createOrchestrationProgressChannel(
       openOrchestration: true,
       trackHistory: false,
     });
-    window.lunaScopeUi?.setExecutionActivity({
+    setExecutionActivity({
       running: !["completed", "failed", "cancelled"].includes(event.state),
       workerId: event.workerId,
       role,
@@ -1228,7 +1239,7 @@ function renderModelCommentaryProgress(
     summary: text,
     openOrchestration: false,
   });
-  window.lunaScopeUi?.setExecutionActivity({
+  setExecutionActivity({
     running: event.itemPhase !== "completed",
     workerId: event.workerId,
     role,
@@ -1255,7 +1266,7 @@ function renderToolActivityProgress(
     summary: `${failed ? tr("失败", "Failed") : completed ? tr("完成", "Completed") : tr("运行中", "Running")} · ${event.detail}`,
     openOrchestration: failed,
   });
-  window.lunaScopeUi?.setExecutionActivity({
+  setExecutionActivity({
     running: !failed && !completed,
     workerId: event.workerId,
     role,
@@ -1298,7 +1309,7 @@ function renderReasoningSummaryProgress(
     summary: text,
     openOrchestration: false,
   });
-  window.lunaScopeUi?.setExecutionActivity({
+  setExecutionActivity({
     running: event.itemPhase !== "completed",
     workerId: event.workerId,
     role,
@@ -1767,7 +1778,7 @@ async function executeNativeOrchestration(): Promise<void> {
     nativeOrchestrationRunning = false;
     nativeOrchestrationPaused = false;
     renderNativeRunControls();
-    window.lunaScopeUi?.setExecutionActivity({
+    setExecutionActivity({
       running: false,
       workerId: null,
       role: "LunaScope",
@@ -1876,7 +1887,7 @@ async function retryFailedAgents(sourceRunIdOverride?: string): Promise<void> {
     nativeOrchestrationRunning = false;
     nativeOrchestrationPaused = false;
     renderNativeRunControls();
-    window.lunaScopeUi?.setExecutionActivity({
+    setExecutionActivity({
       running: false,
       workerId: null,
       role: "LunaScope",
@@ -4182,6 +4193,8 @@ function showSettingsPage(page: string, button: HTMLButtonElement): void {
     void loadExtensionsWorkspace();
   } else if (page === "general") {
     panel.innerHTML = generalSettingsMarkup();
+  } else if (page === "companion") {
+    void renderCompanionSettings(tr);
   } else if (page === "projects") {
     panel.innerHTML = projectSettingsMarkup();
   } else if (page === "ultranote") {
@@ -4235,6 +4248,7 @@ async function handleNativeSettingsAction(
 ): Promise<void> {
   const action = button.dataset.nativeAction;
   if (!action) return;
+  if (await handleCompanionSettingsAction(action, tr, button)) return;
   if (action === "project-open-manager") {
     await openProjectManager(false);
     return;
@@ -5296,7 +5310,7 @@ function bindNativeSettings(): void {
           nativeOrchestrationPaused = false;
           void invoke<boolean>("cancel_native_orchestration")
             .then(() => {
-              window.lunaScopeUi?.setExecutionActivity({
+              setExecutionActivity({
                 running: true,
                 workerId: null,
                 role: "LunaScope",
