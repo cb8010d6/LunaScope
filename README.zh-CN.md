@@ -38,6 +38,7 @@ LunaScope 是一款 Windows 优先、本地优先的 Agent 工作台。它想解
 - 从固定的全局 Skill 目录动态加载 Codex 与 Claude 兼容 Skills。
 - 支持有界 MCP、GitHub Skill 导入、模型路由、暂停、继续、取消和运行中引导重规划。
 - 提供 UltraNote 项目：课程上下文、文档解析、双语术语、互动 HTML 笔记、Mermaid、数学表达和离线 PDF。
+- 提供可选原生桌面伙伴：导入本地 Spine 3.8 或 Live2D Cubism 模型并直接跟随 Agent 任务状态；模型库支持元数据搜索、按需下载、摘要校验、已安装管理，Avatar Studio 支持自动生成可编辑形象包草稿，不启动额外服务，也不捆绑角色资产。
 
 ## 架构
 

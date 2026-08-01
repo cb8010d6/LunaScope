@@ -14,7 +14,9 @@ tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
 base64.workspace = true
+chrono = { version = "0.4", features = ["serde"] }
 deformat.workspace = true
+futures-util.workspace = true
 include_dir = "0.7.4"
 jiff.workspace = true
 lunascope-core = { path = "../../../crates/lunascope-core" }
@@ -24,10 +26,13 @@ lunascope-runtime = { path = "../../../crates/lunascope-runtime" }
 lunascope-storage = { path = "../../../crates/lunascope-storage" }
 office_oxide.workspace = true
 pulldown-cmark.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
-tauri = { version = "2.11.5", features = [] }
+sha1 = "0.11"
+sha2.workspace = true
+tauri = { version = "2.11.5", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tempfile.workspace = true
 tokio.workspace = true
@@ -35,3 +40,7 @@ uuid.workspace = true
 tokio-util.workspace = true
 url.workspace = true
 zip.workspace = true
+
+[dev-dependencies]
+axum = "0.7"
+futures = "0.3"

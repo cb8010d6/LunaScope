@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LunaScope Companion</title>
+  </head>
+  <body>
+    <main id="companion-shell">
+      <section id="companion-stage" aria-label="LunaScope 桌面伙伴"></section>
+      <aside id="companion-bubble" aria-live="polite" hidden>
+        <strong id="companion-title">LunaScope</strong>
+        <span id="companion-detail"></span>
+      </aside>
+      <button id="companion-hide" type="button" title="隐藏桌面伙伴" aria-label="隐藏桌面伙伴">×</button>
+      <p id="companion-error" role="alert" hidden></p>
+    </main>
+    <script type="module" src="/apps/desktop/src/companion/main.ts"></script>
+  </body>
+</html>

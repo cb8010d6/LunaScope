@@ -705,11 +705,10 @@ impl RuntimeSnapshot {
         event.validate()?;
 
         match &event.payload {
-            EventData::RunCreated { .. } => {
-                if event.sequence != 1 {
-                    return Err(ProjectionError::RunCreatedAfterStart);
-                }
+            EventData::RunCreated { .. } if event.sequence != 1 => {
+                return Err(ProjectionError::RunCreatedAfterStart);
             }
+            EventData::RunCreated { .. } => {}
             EventData::RunStateChanged { from, to, .. } => {
                 if self.run_state != *from {
                     return Err(ProjectionError::RunStateMismatch {
@@ -806,11 +805,12 @@ impl RuntimeSnapshot {
                     ));
                 }
             }
-            EventData::ArtifactRecorded { artifact } => {
-                if !self.artifact_ids.contains(&artifact.artifact_id) {
-                    self.artifact_ids.push(artifact.artifact_id.clone());
-                }
+            EventData::ArtifactRecorded { artifact }
+                if !self.artifact_ids.contains(&artifact.artifact_id) =>
+            {
+                self.artifact_ids.push(artifact.artifact_id.clone());
             }
+            EventData::ArtifactRecorded { .. } => {}
             EventData::VerificationRecorded { verification } => {
                 self.verification = verification.status;
             }

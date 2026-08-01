@@ -1,0 +1,78 @@
+{
+  "states": [
+    "idle",
+    "working",
+    "reviewing",
+    "running",
+    "success",
+    "failed",
+    "waiting",
+    "sleeping",
+    "reminder"
+  ],
+  "aliases": {
+    "move": "running",
+    "run": "running",
+    "review": "reviewing",
+    "special": "reviewing",
+    "interact": "reminder",
+    "sleep": "sleeping",
+    "fail": "failed",
+    "wait": "waiting"
+  },
+  "labels": {
+    "idle": "Idle",
+    "working": "Working",
+    "reviewing": "Review",
+    "running": "Run",
+    "success": "Success",
+    "failed": "Failed",
+    "waiting": "Wait",
+    "sleeping": "Sleep",
+    "reminder": "Reminder"
+  },
+  "animationMap": {
+    "idle": {
+      "animation": "Relax",
+      "loop": true
+    },
+    "working": {
+      "animation": "Relax",
+      "loop": true
+    },
+    "reviewing": {
+      "animation": "Special",
+      "segment": "review",
+      "loop": true,
+      "repeatSegment": false
+    },
+    "running": {
+      "animation": "Move",
+      "loop": true
+    },
+    "success": {
+      "animation": "Special",
+      "segment": "success",
+      "tailSegment": "successLoop",
+      "loop": false
+    },
+    "failed": {
+      "animation": "Sleep",
+      "loop": true
+    },
+    "waiting": {
+      "animation": "Sit",
+      "loop": true
+    },
+    "sleeping": {
+      "animation": "Sleep",
+      "loop": true
+    },
+    "reminder": {
+      "animation": "Interact",
+      "loop": false,
+      "returnTo": "idle",
+      "returnAfterMs": 5600
+    }
+  }
+}
