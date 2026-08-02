@@ -14,9 +14,12 @@ The model-library JSON files under
 `apps/desktop/src-tauri/resources/companion/catalog/` are metadata snapshots from
 the pinned Ark-Models repository revision `2f3187f780108847d7327946e1906fc6b80bead3`.
 They are not model binaries. Their entries intentionally use `NOASSERTION` where
-upstream licensing or redistribution rights have not been verified. Downloads are
-performed only after an explicit user action, written to the user's local data
-directory, and are never included in source archives or releases.
+upstream licensing or redistribution rights have not been verified. Opening the
+model gallery may prepare a bounded, session-only preview cache for up to four
+Spine models at a time, render one static card frame, and replace the raw cache
+before processing the next batch. Residual cache is cleared on shutdown or the next launch.
+Permanent installation still requires explicit acknowledgement. Downloaded files
+are never included in source archives or releases.
 
 The Live2D adapter includes the Cubism 4 bridge from `pixi-live2d-display`
 0.4.0, copyright its contributors, under the MIT License. Its retained license
@@ -24,8 +27,23 @@ is at `apps/desktop/src/companion/vendor/live2d/LICENSE.pixi-live2d-display.txt`
 LunaScope does not bundle Live2D Cubism Core. On the user's first Live2D import,
 the app downloads the unmodified Redistributable Code directly from Live2D's
 official `cubism.live2d.com` endpoint and stores it in the local companion
-runtime directory. Cubism Core remains subject to Live2D's Proprietary Software
+runtime directory only after its pinned SHA-256 digest is verified. Cubism Core remains subject to Live2D's Proprietary Software
 License Agreement, linked in that downloaded file's header.
+
+The model gallery also contains metadata for the official **Rice Glassfield**
+sample model from `Live2D/CubismWebSamples`, pinned at revision
+`b1de66b0b1f1cb881d95fb6158622aeb6a2827bd`. The model files are not bundled,
+mirrored, or automatically preloaded. A user must open and accept the linked
+[Live2D Free Material License](https://www.live2d.com/eula/live2d-free-material-license-agreement_en.html)
+and [Sample Model Terms](https://www.live2d.com/eula/live2d-sample-model-terms_en.html)
+before LunaScope downloads the files directly from Live2D's official GitHub
+organization. The download command also rejects missing or mismatched acceptance
+metadata for the pinned catalog entry. The required attribution is displayed in
+the install dialog:
+
+> This content uses sample data owned and copyrighted by Live2D Inc. The sample
+> data are utilized in accordance with terms and conditions set by Live2D Inc.
+> This content itself is created at the author's sole discretion.
 
 ## Document understanding and attachment ingestion
 

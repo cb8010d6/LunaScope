@@ -3,5 +3,6 @@ export class SpinePlayer {
   init(): Promise<void>;
   applyState(state: { state: string; source?: string }, force?: boolean): void;
   setPresentationScale(scale: number, notify?: boolean): void;
+  captureFrame(width?: number, height?: number): string | null;
   destroy(): void;
 }

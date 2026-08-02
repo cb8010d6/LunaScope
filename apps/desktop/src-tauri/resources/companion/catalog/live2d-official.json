@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "models": [
+    {
+      "id": "live2d-official-rice",
+      "name": "Rice Glassfield",
+      "modelKind": "live2d",
+      "entryFile": "Rice.model3.json",
+      "source": "Live2D Official Samples",
+      "author": "Live2D Inc.",
+      "license": "Live2D Free Material License",
+      "licenseWarning": "You must accept the Live2D Free Material License and the Rice sample model terms before downloading. Business and expandable-application use may require additional Live2D licensing.",
+      "licenseNote": "This content uses sample data owned and copyrighted by Live2D Inc. The sample data are utilized in accordance with terms and conditions set by Live2D Inc. This content itself is created at the author's sole discretion.",
+      "repositoryUrl": "https://github.com/Live2D/CubismWebSamples/tree/b1de66b0b1f1cb881d95fb6158622aeb6a2827bd/Samples/Resources/Rice",
+      "licenseUrl": "https://www.live2d.com/eula/live2d-free-material-license-agreement_en.html",
+      "termsUrl": "https://www.live2d.com/eula/live2d-sample-model-terms_en.html",
+      "description": "Official Live2D sample model pinned to CubismWebSamples commit b1de66b0.",
+      "category": "live2d",
+      "compatibilityProfile": "cubism-5",
+      "files": [
+        { "name": "Rice.model3.json", "url": "https://raw.githubusercontent.com/Live2D/CubismWebSamples/b1de66b0b1f1cb881d95fb6158622aeb6a2827bd/Samples/Resources/Rice/Rice.model3.json", "sha256": "0dd95a8524d4540467569e9264e979d7dbc53312d7dd710ca54591b734c1cd52", "sizeBytes": 767, "githubBlobSha": "dd86afabd5eec7a2ca21d98c0a9614b0ebbd25a6", "fallbackUrls": [] },
+        { "name": "Rice.moc3", "url": "https://raw.githubusercontent.com/Live2D/CubismWebSamples/b1de66b0b1f1cb881d95fb6158622aeb6a2827bd/Samples/Resources/Rice/Rice.moc3", "sha256": "be56f2d656d279d8db9fe302ec744fa5992ff884b2ebb233f202772d5dd7e4dc", "sizeBytes": 479104, "githubBlobSha": "a872a6f019f99ef3c7b16d3e5a2aef9c356ae6cc", "fallbackUrls": [] },
+        { "name": "Rice.2048/texture_00.png", "url": "https://raw.githubusercontent.com/Live2D/CubismWebSamples/b1de66b0b1f1cb881d95fb6158622aeb6a2827bd/Samples/Resources/Rice/Rice.2048/texture_00.png", "sha256": "9930643898aeea3a5f11f06933e79a217b64fbec80c06158f512e85454ea60ea", "sizeBytes": 1061518, "githubBlobSha": "85897e896d9a1d95b7cca4a93a551aa8d2b5ed29", "fallbackUrls": [] },
+        { "name": "Rice.2048/texture_01.png", "url": "https://raw.githubusercontent.com/Live2D/CubismWebSamples/b1de66b0b1f1cb881d95fb6158622aeb6a2827bd/Samples/Resources/Rice/Rice.2048/texture_01.png", "sha256": "d80053659ecb2eab98269ade228253034827b8744db1fcb67843acbcc37906de", "sizeBytes": 1505136, "githubBlobSha": "42fce23eb0d47ae540593ee73cd672079fd8b0b5", "fallbackUrls": [] },
+        { "name": "Rice.physics3.json", "url": "https://raw.githubusercontent.com/Live2D/CubismWebSamples/b1de66b0b1f1cb881d95fb6158622aeb6a2827bd/Samples/Resources/Rice/Rice.physics3.json", "sha256": "72f3c854bf00b551bd379785975571c88239b2da9e6db42a9935bcf4a9f2fa3d", "sizeBytes": 25513, "githubBlobSha": "42d2b3b67aca2995dbc812b417b0f56e37f069cc", "fallbackUrls": [] },
+        { "name": "Rice.cdi3.json", "url": "https://raw.githubusercontent.com/Live2D/CubismWebSamples/b1de66b0b1f1cb881d95fb6158622aeb6a2827bd/Samples/Resources/Rice/Rice.cdi3.json", "sha256": "8cdda2aa4ded26313f4cccea99cc1bc34cf939405f1d6e064d25387981648138", "sizeBytes": 12974, "githubBlobSha": "6b83f99218e2339b3a8e97b40c8839f61affd621", "fallbackUrls": [] },
+        { "name": "motions/idle.motion3.json", "url": "https://raw.githubusercontent.com/Live2D/CubismWebSamples/b1de66b0b1f1cb881d95fb6158622aeb6a2827bd/Samples/Resources/Rice/motions/idle.motion3.json", "sha256": "b15a5ba6d59f7369b2b44f960f809c588921d008317d9f15f8a7c66eed0b3fba", "sizeBytes": 10165, "githubBlobSha": "7b1f405a397eda999a6c7971114eadb2fb2fbc91", "fallbackUrls": [] },
+        { "name": "motions/mtn_01.motion3.json", "url": "https://raw.githubusercontent.com/Live2D/CubismWebSamples/b1de66b0b1f1cb881d95fb6158622aeb6a2827bd/Samples/Resources/Rice/motions/mtn_01.motion3.json", "sha256": "1bbbb3b91c5574d04cee312b02e1e89d12e6c155f39b8b4816654daf6658c27d", "sizeBytes": 22819, "githubBlobSha": "9ce514b34f539044600d2984a1c0369ba0531555", "fallbackUrls": [] },
+        { "name": "motions/mtn_02.motion3.json", "url": "https://raw.githubusercontent.com/Live2D/CubismWebSamples/b1de66b0b1f1cb881d95fb6158622aeb6a2827bd/Samples/Resources/Rice/motions/mtn_02.motion3.json", "sha256": "9db0c12a957829078987e0fb7352681a5064c663d4c27366529272f579d3973b", "sizeBytes": 13541, "githubBlobSha": "d37cf0b57a7589545905312736ad806e9cf275c3", "fallbackUrls": [] },
+        { "name": "motions/mtn_03.motion3.json", "url": "https://raw.githubusercontent.com/Live2D/CubismWebSamples/b1de66b0b1f1cb881d95fb6158622aeb6a2827bd/Samples/Resources/Rice/motions/mtn_03.motion3.json", "sha256": "5b2d1910a114fae8c86e8589506872681a233448c11d7694f0faa819325ebe7b", "sizeBytes": 21062, "githubBlobSha": "96726837745843184a70c504e6ef979058c905cf", "fallbackUrls": [] }
+      ]
+    }
+  ]
+}

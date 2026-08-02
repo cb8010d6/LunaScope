@@ -31,6 +31,9 @@ const STANDARD_MOTIONS: &[&str] = &[
     "reminder",
     "interact",
 ];
+const MAX_RUNTIME_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_RUNTIME_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_RUNTIME_FILES: usize = 512;
 const TRANSPARENT_PNG: &[u8] = &[
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
     0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
@@ -213,10 +216,12 @@ pub struct AvatarImportResult {
 #[serde(rename_all = "camelCase")]
 pub struct AvatarRuntimeInstallResult {
     pub installed: bool,
+    pub model_id: String,
     pub validation: AvatarValidation,
     pub registry_path: String,
     pub runtime_path: String,
     pub skel: String,
+    pub atlas: String,
 }
 
 pub fn requirements() -> Value {
@@ -316,7 +321,7 @@ pub fn avatar_runtime_dir(config_dir: &Path, id: &str) -> Result<PathBuf, String
     if !is_safe_avatar_id(id) {
         return Err("Avatar ID must use 1-64 ASCII letters, digits, underscores, or hyphens and start with a letter or digit.".to_string());
     }
-    Ok(config_dir.join("models").join(id))
+    Ok(config_dir.join("models").join(format!("avatar--{id}")))
 }
 
 pub fn is_safe_avatar_id(id: &str) -> bool {
@@ -816,18 +821,39 @@ pub fn install_runtime_pack(
         ));
     }
     let runtime_path = avatar_runtime_dir(config_dir, &validation.id)?;
+    let model_id = format!("avatar--{}", validation.id);
     let models_dir = runtime_path
         .parent()
         .ok_or_else(|| "Cannot resolve avatar runtime directory.".to_string())?;
     fs::create_dir_all(models_dir).map_err(|error| error.to_string())?;
     let staging = models_dir.join(format!(".{}.install-{}", validation.id, unique_suffix()));
-    if let Err(error) = copy_tree(&path.join("exports"), &staging) {
+    let runtime_files = std::iter::once(validation.runtime_skel.clone())
+        .chain(std::iter::once(validation.runtime_atlas.clone()))
+        .chain(validation.textures.iter().cloned())
+        .collect::<Vec<_>>();
+    if let Err(error) = copy_runtime_files(&path.join("exports"), &staging, &runtime_files) {
         let _ = fs::remove_dir_all(&staging);
         return Err(error);
     }
     if let Err(error) = spine_assets::validate_spine_asset_dir(&staging, &validation.runtime_skel) {
         let _ = fs::remove_dir_all(&staging);
         return Err(format!("Staged avatar runtime failed validation: {error}"));
+    }
+    let metadata = json!({
+        "id": model_id,
+        "name": validation.name,
+        "modelKind": "spine38",
+        "entryFile": validation.runtime_skel,
+        "atlasFile": validation.runtime_atlas,
+        "source": "avatar-studio",
+        "license": "USER_PROVIDED"
+    });
+    if let Err(error) = fs::write(
+        staging.join(".companion-model.json"),
+        serde_json::to_vec_pretty(&metadata).map_err(|error| error.to_string())?,
+    ) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error.to_string());
     }
 
     let backup = replace_directory_atomically(&staging, &runtime_path)?;
@@ -842,12 +868,15 @@ pub fn install_runtime_pack(
         let _ = fs::remove_dir_all(backup);
     }
     let skel = validation.runtime_skel.clone();
+    let atlas = validation.runtime_atlas.clone();
     Ok(AvatarRuntimeInstallResult {
         installed: true,
+        model_id,
         validation,
         registry_path: registry_path.to_string_lossy().to_string(),
         runtime_path: runtime_path.to_string_lossy().to_string(),
         skel,
+        atlas,
     })
 }
 
@@ -1447,6 +1476,68 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), String> {
     copy_tree_inner(&root, &root, destination)
 }
 
+fn copy_runtime_files(source: &Path, destination: &Path, files: &[String]) -> Result<(), String> {
+    if files.is_empty() || files.len() > MAX_RUNTIME_FILES {
+        return Err(format!(
+            "Runtime export must contain between 1 and {MAX_RUNTIME_FILES} required files."
+        ));
+    }
+    let root = source
+        .canonicalize()
+        .map_err(|error| format!("Cannot read runtime exports: {error}"))?;
+    fs::create_dir_all(destination).map_err(|error| error.to_string())?;
+    let mut seen = BTreeSet::new();
+    let mut total = 0_u64;
+    for relative in files {
+        let relative = spine_assets::safe_relative_path(relative)?;
+        if relative.components().count() > 8 {
+            return Err(format!(
+                "Runtime export path is nested too deeply: {}",
+                relative.display()
+            ));
+        }
+        let normalized = relative.to_string_lossy().replace('\\', "/");
+        if !seen.insert(normalized) {
+            continue;
+        }
+        let canonical = root
+            .join(&relative)
+            .canonicalize()
+            .map_err(|error| format!("Cannot read required runtime file: {error}"))?;
+        if !canonical.starts_with(&root) || !canonical.is_file() {
+            return Err(format!(
+                "Runtime export escapes exports/: {}",
+                relative.display()
+            ));
+        }
+        let size = canonical
+            .metadata()
+            .map_err(|error| error.to_string())?
+            .len();
+        if size > MAX_RUNTIME_FILE_BYTES {
+            return Err(format!(
+                "Runtime export file exceeds 64 MiB: {}",
+                relative.display()
+            ));
+        }
+        total = total
+            .checked_add(size)
+            .ok_or_else(|| "Runtime export size overflow.".to_string())?;
+        if total > MAX_RUNTIME_TOTAL_BYTES {
+            return Err("Runtime export exceeds 256 MiB.".to_string());
+        }
+        let destination_path = destination.join(&relative);
+        fs::create_dir_all(
+            destination_path
+                .parent()
+                .ok_or_else(|| "Runtime export has no parent directory.".to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        fs::copy(canonical, destination_path).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 fn copy_tree_inner(root: &Path, source: &Path, destination: &Path) -> Result<(), String> {
     let mut entries = fs::read_dir(source)
         .map_err(|error| error.to_string())?
@@ -1659,11 +1750,22 @@ mod tests {
         let config = temp_pack("runtime-config");
         let installed = install_runtime_pack(&root, &config).unwrap();
         assert!(installed.installed);
+        assert_eq!(installed.model_id, "avatar--test_avatar");
         assert!(
             Path::new(&installed.runtime_path)
                 .join("avatar.skel")
                 .is_file()
         );
+        assert!(
+            Path::new(&installed.runtime_path)
+                .join(".companion-model.json")
+                .is_file()
+        );
+        let metadata: Value = serde_json::from_slice(
+            &fs::read(Path::new(&installed.runtime_path).join(".companion-model.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(metadata["id"], "avatar--test_avatar");
         let registry = load_registry(&config).unwrap();
         assert_eq!(registry.len(), 1);
         assert_eq!(registry[0]["runtimeSkel"], "avatar.skel");
@@ -1705,7 +1807,7 @@ mod tests {
     }
 
     #[test]
-    fn reinstall_replaces_previous_runtime_without_leaving_old_files() {
+    fn reinstall_replaces_runtime_and_drops_unreferenced_exports() {
         let root = temp_pack("reinstall");
         write_draft_pack(&root, "test_avatar");
         write_runtime(&root, "avatar.skel");
@@ -1718,9 +1820,38 @@ mod tests {
         let installed = install_runtime_pack(&root, &config).unwrap();
         let runtime = Path::new(&installed.runtime_path);
         assert!(!runtime.join("old.txt").exists());
-        assert_eq!(fs::read_to_string(runtime.join("new.txt")).unwrap(), "new");
+        assert!(!runtime.join("new.txt").exists());
+        assert!(runtime.join("avatar.skel").is_file());
         assert_eq!(load_registry(&config).unwrap().len(), 1);
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(config);
+    }
+
+    #[test]
+    fn runtime_install_rejects_an_oversized_required_texture() {
+        let root = temp_pack("oversized-runtime");
+        write_draft_pack(&root, "test_avatar");
+        write_runtime(&root, "avatar.skel");
+        fs::OpenOptions::new()
+            .write(true)
+            .open(root.join("exports").join("avatar.png"))
+            .unwrap()
+            .set_len(MAX_RUNTIME_FILE_BYTES + 1)
+            .unwrap();
+        let config = temp_pack("oversized-runtime-config");
+        let error = install_runtime_pack(&root, &config).unwrap_err();
+        assert!(error.contains("64 MiB"));
+        assert!(!avatar_runtime_dir(&config, "test_avatar").unwrap().exists());
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(config);
+    }
+
+    #[test]
+    fn avatar_runtime_uses_a_reserved_model_directory() {
+        let config = Path::new("C:/companion");
+        assert_eq!(
+            avatar_runtime_dir(config, "my-avatar").unwrap(),
+            config.join("models").join("avatar--my-avatar")
+        );
     }
 }

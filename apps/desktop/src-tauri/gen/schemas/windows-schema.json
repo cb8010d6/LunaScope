@@ -177,6 +177,1008 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Allows the LunaScope main window to use the registered application commands.\n#### This permission set includes:\n\n- `allow-create-run`\n- `allow-delete-conversation`\n- `allow-get-runtime-snapshot`\n- `allow-subscribe-run`\n- `allow-list-provider-configs`\n- `allow-save-provider-config`\n- `allow-delete-provider-credential`\n- `allow-test-provider-connection`\n- `allow-get-routing-policy`\n- `allow-save-routing-policy`\n- `allow-parse-model-preference`\n- `allow-get-model-selection-settings`\n- `allow-save-model-selection-settings`\n- `allow-extension-directories`\n- `allow-discover-skills`\n- `allow-load-skill`\n- `allow-list-mcp-server-configs`\n- `allow-save-mcp-server-config`\n- `allow-delete-mcp-server-config`\n- `allow-delete-mcp-credential`\n- `allow-test-mcp-server`\n- `allow-invoke-mcp-tool`\n- `allow-preview-github-import`\n- `allow-install-github-import`\n- `allow-list-installed-imports`\n- `allow-rollback-github-import`\n- `allow-compare-github-import`\n- `allow-import-attachments`\n- `allow-remove-imported-attachment`\n- `allow-companion-get-settings`\n- `allow-companion-save-preferences`\n- `allow-companion-import-model`\n- `allow-companion-set-activity`\n- `allow-companion-report-renderer-status`\n- `allow-companion-avatar-requirements`\n- `allow-companion-list-avatar-packs`\n- `allow-companion-create-avatar-pack`\n- `allow-companion-duplicate-avatar-pack`\n- `allow-companion-delete-avatar-pack`\n- `allow-companion-repack-avatar-pack`\n- `allow-companion-load-avatar-manifest`\n- `allow-companion-save-avatar-manifest`\n- `allow-companion-validate-avatar-pack`\n- `allow-companion-register-avatar-pack`\n- `allow-companion-install-avatar-pack`\n- `allow-companion-import-avatar-layers`\n- `allow-companion-read-avatar-asset`\n- `allow-companion-search-catalog`\n- `allow-companion-list-installed-models`\n- `allow-companion-preload-catalog-models`\n- `allow-companion-install-catalog-model`\n- `allow-companion-activate-installed-model`\n- `allow-companion-remove-installed-model`\n- `allow-draft-native-orchestration`\n- `allow-list-conversation-messages`\n- `allow-list-domain-packs`\n- `allow-patch-native-orchestration`\n- `allow-run-native-orchestration`\n- `allow-read-orchestration-change-set`\n- `allow-recover-native-orchestration-view`\n- `allow-retry-failed-native-orchestration`\n- `allow-guide-native-orchestration`\n- `allow-set-native-orchestration-paused`\n- `allow-cancel-native-orchestration`\n- `allow-list-courses`\n- `allow-create-course`\n- `allow-bind-course-thread`\n- `allow-activate-ultranote`\n- `allow-search-ultranote`\n- `allow-ingest-syllabus`\n- `allow-ingest-lecture`\n- `allow-evaluate-homework`\n- `allow-export-ultranote`\n- `allow-list-projects`\n- `allow-save-project`\n- `allow-delete-project`\n- `allow-get-user-preferences`\n- `allow-save-user-preferences`\n- `allow-read-project-file`\n- `allow-create-project-file`\n- `allow-patch-project-file`\n- `allow-route-tools`\n- `allow-default-workspace-root`",
+          "type": "string",
+          "const": "main-app-commands",
+          "markdownDescription": "Allows the LunaScope main window to use the registered application commands.\n#### This permission set includes:\n\n- `allow-create-run`\n- `allow-delete-conversation`\n- `allow-get-runtime-snapshot`\n- `allow-subscribe-run`\n- `allow-list-provider-configs`\n- `allow-save-provider-config`\n- `allow-delete-provider-credential`\n- `allow-test-provider-connection`\n- `allow-get-routing-policy`\n- `allow-save-routing-policy`\n- `allow-parse-model-preference`\n- `allow-get-model-selection-settings`\n- `allow-save-model-selection-settings`\n- `allow-extension-directories`\n- `allow-discover-skills`\n- `allow-load-skill`\n- `allow-list-mcp-server-configs`\n- `allow-save-mcp-server-config`\n- `allow-delete-mcp-server-config`\n- `allow-delete-mcp-credential`\n- `allow-test-mcp-server`\n- `allow-invoke-mcp-tool`\n- `allow-preview-github-import`\n- `allow-install-github-import`\n- `allow-list-installed-imports`\n- `allow-rollback-github-import`\n- `allow-compare-github-import`\n- `allow-import-attachments`\n- `allow-remove-imported-attachment`\n- `allow-companion-get-settings`\n- `allow-companion-save-preferences`\n- `allow-companion-import-model`\n- `allow-companion-set-activity`\n- `allow-companion-report-renderer-status`\n- `allow-companion-avatar-requirements`\n- `allow-companion-list-avatar-packs`\n- `allow-companion-create-avatar-pack`\n- `allow-companion-duplicate-avatar-pack`\n- `allow-companion-delete-avatar-pack`\n- `allow-companion-repack-avatar-pack`\n- `allow-companion-load-avatar-manifest`\n- `allow-companion-save-avatar-manifest`\n- `allow-companion-validate-avatar-pack`\n- `allow-companion-register-avatar-pack`\n- `allow-companion-install-avatar-pack`\n- `allow-companion-import-avatar-layers`\n- `allow-companion-read-avatar-asset`\n- `allow-companion-search-catalog`\n- `allow-companion-list-installed-models`\n- `allow-companion-preload-catalog-models`\n- `allow-companion-install-catalog-model`\n- `allow-companion-activate-installed-model`\n- `allow-companion-remove-installed-model`\n- `allow-draft-native-orchestration`\n- `allow-list-conversation-messages`\n- `allow-list-domain-packs`\n- `allow-patch-native-orchestration`\n- `allow-run-native-orchestration`\n- `allow-read-orchestration-change-set`\n- `allow-recover-native-orchestration-view`\n- `allow-retry-failed-native-orchestration`\n- `allow-guide-native-orchestration`\n- `allow-set-native-orchestration-paused`\n- `allow-cancel-native-orchestration`\n- `allow-list-courses`\n- `allow-create-course`\n- `allow-bind-course-thread`\n- `allow-activate-ultranote`\n- `allow-search-ultranote`\n- `allow-ingest-syllabus`\n- `allow-ingest-lecture`\n- `allow-evaluate-homework`\n- `allow-export-ultranote`\n- `allow-list-projects`\n- `allow-save-project`\n- `allow-delete-project`\n- `allow-get-user-preferences`\n- `allow-save-user-preferences`\n- `allow-read-project-file`\n- `allow-create-project-file`\n- `allow-patch-project-file`\n- `allow-route-tools`\n- `allow-default-workspace-root`"
+        },
+        {
+          "description": "Enables the activate_ultranote command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-activate-ultranote",
+          "markdownDescription": "Enables the activate_ultranote command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the bind_course_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-bind-course-thread",
+          "markdownDescription": "Enables the bind_course_thread command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the cancel_native_orchestration command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-cancel-native-orchestration",
+          "markdownDescription": "Enables the cancel_native_orchestration command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_activate_installed_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-activate-installed-model",
+          "markdownDescription": "Enables the companion_activate_installed_model command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_avatar_requirements command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-avatar-requirements",
+          "markdownDescription": "Enables the companion_avatar_requirements command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_create_avatar_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-create-avatar-pack",
+          "markdownDescription": "Enables the companion_create_avatar_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_delete_avatar_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-delete-avatar-pack",
+          "markdownDescription": "Enables the companion_delete_avatar_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_duplicate_avatar_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-duplicate-avatar-pack",
+          "markdownDescription": "Enables the companion_duplicate_avatar_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_get_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-get-settings",
+          "markdownDescription": "Enables the companion_get_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_import_avatar_layers command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-import-avatar-layers",
+          "markdownDescription": "Enables the companion_import_avatar_layers command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_import_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-import-model",
+          "markdownDescription": "Enables the companion_import_model command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_install_avatar_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-install-avatar-pack",
+          "markdownDescription": "Enables the companion_install_avatar_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_install_catalog_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-install-catalog-model",
+          "markdownDescription": "Enables the companion_install_catalog_model command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_list_avatar_packs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-list-avatar-packs",
+          "markdownDescription": "Enables the companion_list_avatar_packs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_list_installed_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-list-installed-models",
+          "markdownDescription": "Enables the companion_list_installed_models command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_load_avatar_manifest command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-load-avatar-manifest",
+          "markdownDescription": "Enables the companion_load_avatar_manifest command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_preload_catalog_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-preload-catalog-models",
+          "markdownDescription": "Enables the companion_preload_catalog_models command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_read_avatar_asset command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-read-avatar-asset",
+          "markdownDescription": "Enables the companion_read_avatar_asset command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_register_avatar_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-register-avatar-pack",
+          "markdownDescription": "Enables the companion_register_avatar_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_remove_installed_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-remove-installed-model",
+          "markdownDescription": "Enables the companion_remove_installed_model command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_repack_avatar_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-repack-avatar-pack",
+          "markdownDescription": "Enables the companion_repack_avatar_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_report_renderer_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-report-renderer-status",
+          "markdownDescription": "Enables the companion_report_renderer_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_save_avatar_manifest command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-save-avatar-manifest",
+          "markdownDescription": "Enables the companion_save_avatar_manifest command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_save_preferences command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-save-preferences",
+          "markdownDescription": "Enables the companion_save_preferences command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_search_catalog command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-search-catalog",
+          "markdownDescription": "Enables the companion_search_catalog command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_set_activity command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-set-activity",
+          "markdownDescription": "Enables the companion_set_activity command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the companion_validate_avatar_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-companion-validate-avatar-pack",
+          "markdownDescription": "Enables the companion_validate_avatar_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the compare_github_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-compare-github-import",
+          "markdownDescription": "Enables the compare_github_import command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_course command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-course",
+          "markdownDescription": "Enables the create_course command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_project_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-project-file",
+          "markdownDescription": "Enables the create_project_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-run",
+          "markdownDescription": "Enables the create_run command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the default_workspace_root command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-default-workspace-root",
+          "markdownDescription": "Enables the default_workspace_root command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_conversation command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-conversation",
+          "markdownDescription": "Enables the delete_conversation command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_mcp_credential command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-mcp-credential",
+          "markdownDescription": "Enables the delete_mcp_credential command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_mcp_server_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-mcp-server-config",
+          "markdownDescription": "Enables the delete_mcp_server_config command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_project command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-project",
+          "markdownDescription": "Enables the delete_project command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_provider_credential command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-delete-provider-credential",
+          "markdownDescription": "Enables the delete_provider_credential command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the discover_skills command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-discover-skills",
+          "markdownDescription": "Enables the discover_skills command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the draft_native_orchestration command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-draft-native-orchestration",
+          "markdownDescription": "Enables the draft_native_orchestration command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the evaluate_homework command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-evaluate-homework",
+          "markdownDescription": "Enables the evaluate_homework command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the export_ultranote command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-export-ultranote",
+          "markdownDescription": "Enables the export_ultranote command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the extension_directories command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-extension-directories",
+          "markdownDescription": "Enables the extension_directories command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_model_selection_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-model-selection-settings",
+          "markdownDescription": "Enables the get_model_selection_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_routing_policy command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-routing-policy",
+          "markdownDescription": "Enables the get_routing_policy command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_runtime_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-runtime-snapshot",
+          "markdownDescription": "Enables the get_runtime_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_user_preferences command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-user-preferences",
+          "markdownDescription": "Enables the get_user_preferences command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the guide_native_orchestration command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-guide-native-orchestration",
+          "markdownDescription": "Enables the guide_native_orchestration command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the import_attachments command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-import-attachments",
+          "markdownDescription": "Enables the import_attachments command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the ingest_lecture command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-ingest-lecture",
+          "markdownDescription": "Enables the ingest_lecture command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the ingest_syllabus command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-ingest-syllabus",
+          "markdownDescription": "Enables the ingest_syllabus command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the install_github_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-install-github-import",
+          "markdownDescription": "Enables the install_github_import command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the invoke_mcp_tool command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-invoke-mcp-tool",
+          "markdownDescription": "Enables the invoke_mcp_tool command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_conversation_messages command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-conversation-messages",
+          "markdownDescription": "Enables the list_conversation_messages command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_courses command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-courses",
+          "markdownDescription": "Enables the list_courses command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_domain_packs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-domain-packs",
+          "markdownDescription": "Enables the list_domain_packs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_installed_imports command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-installed-imports",
+          "markdownDescription": "Enables the list_installed_imports command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_mcp_server_configs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-mcp-server-configs",
+          "markdownDescription": "Enables the list_mcp_server_configs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_projects command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-projects",
+          "markdownDescription": "Enables the list_projects command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_provider_configs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-list-provider-configs",
+          "markdownDescription": "Enables the list_provider_configs command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the load_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-load-skill",
+          "markdownDescription": "Enables the load_skill command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the parse_model_preference command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-parse-model-preference",
+          "markdownDescription": "Enables the parse_model_preference command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the patch_native_orchestration command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-patch-native-orchestration",
+          "markdownDescription": "Enables the patch_native_orchestration command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the patch_project_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-patch-project-file",
+          "markdownDescription": "Enables the patch_project_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the preview_github_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-preview-github-import",
+          "markdownDescription": "Enables the preview_github_import command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the read_orchestration_change_set command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-read-orchestration-change-set",
+          "markdownDescription": "Enables the read_orchestration_change_set command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the read_project_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-read-project-file",
+          "markdownDescription": "Enables the read_project_file command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the recover_native_orchestration_view command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-recover-native-orchestration-view",
+          "markdownDescription": "Enables the recover_native_orchestration_view command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_imported_attachment command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-remove-imported-attachment",
+          "markdownDescription": "Enables the remove_imported_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the retry_failed_native_orchestration command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-retry-failed-native-orchestration",
+          "markdownDescription": "Enables the retry_failed_native_orchestration command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the rollback_github_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-rollback-github-import",
+          "markdownDescription": "Enables the rollback_github_import command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the route_tools command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-route-tools",
+          "markdownDescription": "Enables the route_tools command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the run_native_orchestration command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-run-native-orchestration",
+          "markdownDescription": "Enables the run_native_orchestration command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_mcp_server_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-mcp-server-config",
+          "markdownDescription": "Enables the save_mcp_server_config command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_model_selection_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-model-selection-settings",
+          "markdownDescription": "Enables the save_model_selection_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_project command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-project",
+          "markdownDescription": "Enables the save_project command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_provider_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-provider-config",
+          "markdownDescription": "Enables the save_provider_config command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_routing_policy command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-routing-policy",
+          "markdownDescription": "Enables the save_routing_policy command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_user_preferences command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-user-preferences",
+          "markdownDescription": "Enables the save_user_preferences command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the search_ultranote command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-search-ultranote",
+          "markdownDescription": "Enables the search_ultranote command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_native_orchestration_paused command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-native-orchestration-paused",
+          "markdownDescription": "Enables the set_native_orchestration_paused command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the subscribe_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-subscribe-run",
+          "markdownDescription": "Enables the subscribe_run command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the test_mcp_server command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-test-mcp-server",
+          "markdownDescription": "Enables the test_mcp_server command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the test_provider_connection command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-test-provider-connection",
+          "markdownDescription": "Enables the test_provider_connection command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the activate_ultranote command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-activate-ultranote",
+          "markdownDescription": "Denies the activate_ultranote command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the bind_course_thread command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-bind-course-thread",
+          "markdownDescription": "Denies the bind_course_thread command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_native_orchestration command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-cancel-native-orchestration",
+          "markdownDescription": "Denies the cancel_native_orchestration command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_activate_installed_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-activate-installed-model",
+          "markdownDescription": "Denies the companion_activate_installed_model command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_avatar_requirements command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-avatar-requirements",
+          "markdownDescription": "Denies the companion_avatar_requirements command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_create_avatar_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-create-avatar-pack",
+          "markdownDescription": "Denies the companion_create_avatar_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_delete_avatar_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-delete-avatar-pack",
+          "markdownDescription": "Denies the companion_delete_avatar_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_duplicate_avatar_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-duplicate-avatar-pack",
+          "markdownDescription": "Denies the companion_duplicate_avatar_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_get_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-get-settings",
+          "markdownDescription": "Denies the companion_get_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_import_avatar_layers command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-import-avatar-layers",
+          "markdownDescription": "Denies the companion_import_avatar_layers command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_import_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-import-model",
+          "markdownDescription": "Denies the companion_import_model command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_install_avatar_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-install-avatar-pack",
+          "markdownDescription": "Denies the companion_install_avatar_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_install_catalog_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-install-catalog-model",
+          "markdownDescription": "Denies the companion_install_catalog_model command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_list_avatar_packs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-list-avatar-packs",
+          "markdownDescription": "Denies the companion_list_avatar_packs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_list_installed_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-list-installed-models",
+          "markdownDescription": "Denies the companion_list_installed_models command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_load_avatar_manifest command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-load-avatar-manifest",
+          "markdownDescription": "Denies the companion_load_avatar_manifest command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_preload_catalog_models command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-preload-catalog-models",
+          "markdownDescription": "Denies the companion_preload_catalog_models command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_read_avatar_asset command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-read-avatar-asset",
+          "markdownDescription": "Denies the companion_read_avatar_asset command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_register_avatar_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-register-avatar-pack",
+          "markdownDescription": "Denies the companion_register_avatar_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_remove_installed_model command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-remove-installed-model",
+          "markdownDescription": "Denies the companion_remove_installed_model command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_repack_avatar_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-repack-avatar-pack",
+          "markdownDescription": "Denies the companion_repack_avatar_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_report_renderer_status command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-report-renderer-status",
+          "markdownDescription": "Denies the companion_report_renderer_status command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_save_avatar_manifest command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-save-avatar-manifest",
+          "markdownDescription": "Denies the companion_save_avatar_manifest command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_save_preferences command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-save-preferences",
+          "markdownDescription": "Denies the companion_save_preferences command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_search_catalog command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-search-catalog",
+          "markdownDescription": "Denies the companion_search_catalog command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_set_activity command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-set-activity",
+          "markdownDescription": "Denies the companion_set_activity command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the companion_validate_avatar_pack command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-companion-validate-avatar-pack",
+          "markdownDescription": "Denies the companion_validate_avatar_pack command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the compare_github_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-compare-github-import",
+          "markdownDescription": "Denies the compare_github_import command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_course command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-course",
+          "markdownDescription": "Denies the create_course command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_project_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-project-file",
+          "markdownDescription": "Denies the create_project_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-run",
+          "markdownDescription": "Denies the create_run command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the default_workspace_root command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-default-workspace-root",
+          "markdownDescription": "Denies the default_workspace_root command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_conversation command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-conversation",
+          "markdownDescription": "Denies the delete_conversation command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_mcp_credential command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-mcp-credential",
+          "markdownDescription": "Denies the delete_mcp_credential command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_mcp_server_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-mcp-server-config",
+          "markdownDescription": "Denies the delete_mcp_server_config command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_project command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-project",
+          "markdownDescription": "Denies the delete_project command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_provider_credential command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-delete-provider-credential",
+          "markdownDescription": "Denies the delete_provider_credential command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the discover_skills command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-discover-skills",
+          "markdownDescription": "Denies the discover_skills command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the draft_native_orchestration command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-draft-native-orchestration",
+          "markdownDescription": "Denies the draft_native_orchestration command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the evaluate_homework command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-evaluate-homework",
+          "markdownDescription": "Denies the evaluate_homework command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the export_ultranote command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-export-ultranote",
+          "markdownDescription": "Denies the export_ultranote command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the extension_directories command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-extension-directories",
+          "markdownDescription": "Denies the extension_directories command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_model_selection_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-model-selection-settings",
+          "markdownDescription": "Denies the get_model_selection_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_routing_policy command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-routing-policy",
+          "markdownDescription": "Denies the get_routing_policy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_runtime_snapshot command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-runtime-snapshot",
+          "markdownDescription": "Denies the get_runtime_snapshot command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_user_preferences command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-user-preferences",
+          "markdownDescription": "Denies the get_user_preferences command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the guide_native_orchestration command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-guide-native-orchestration",
+          "markdownDescription": "Denies the guide_native_orchestration command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the import_attachments command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-import-attachments",
+          "markdownDescription": "Denies the import_attachments command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ingest_lecture command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-ingest-lecture",
+          "markdownDescription": "Denies the ingest_lecture command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ingest_syllabus command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-ingest-syllabus",
+          "markdownDescription": "Denies the ingest_syllabus command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the install_github_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-install-github-import",
+          "markdownDescription": "Denies the install_github_import command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the invoke_mcp_tool command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-invoke-mcp-tool",
+          "markdownDescription": "Denies the invoke_mcp_tool command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_conversation_messages command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-conversation-messages",
+          "markdownDescription": "Denies the list_conversation_messages command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_courses command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-courses",
+          "markdownDescription": "Denies the list_courses command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_domain_packs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-domain-packs",
+          "markdownDescription": "Denies the list_domain_packs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_installed_imports command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-installed-imports",
+          "markdownDescription": "Denies the list_installed_imports command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_mcp_server_configs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-mcp-server-configs",
+          "markdownDescription": "Denies the list_mcp_server_configs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_projects command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-projects",
+          "markdownDescription": "Denies the list_projects command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_provider_configs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-list-provider-configs",
+          "markdownDescription": "Denies the list_provider_configs command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the load_skill command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-load-skill",
+          "markdownDescription": "Denies the load_skill command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the parse_model_preference command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-parse-model-preference",
+          "markdownDescription": "Denies the parse_model_preference command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the patch_native_orchestration command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-patch-native-orchestration",
+          "markdownDescription": "Denies the patch_native_orchestration command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the patch_project_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-patch-project-file",
+          "markdownDescription": "Denies the patch_project_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the preview_github_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-preview-github-import",
+          "markdownDescription": "Denies the preview_github_import command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the read_orchestration_change_set command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-read-orchestration-change-set",
+          "markdownDescription": "Denies the read_orchestration_change_set command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the read_project_file command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-read-project-file",
+          "markdownDescription": "Denies the read_project_file command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the recover_native_orchestration_view command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-recover-native-orchestration-view",
+          "markdownDescription": "Denies the recover_native_orchestration_view command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_imported_attachment command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-remove-imported-attachment",
+          "markdownDescription": "Denies the remove_imported_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the retry_failed_native_orchestration command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-retry-failed-native-orchestration",
+          "markdownDescription": "Denies the retry_failed_native_orchestration command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the rollback_github_import command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-rollback-github-import",
+          "markdownDescription": "Denies the rollback_github_import command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the route_tools command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-route-tools",
+          "markdownDescription": "Denies the route_tools command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the run_native_orchestration command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-run-native-orchestration",
+          "markdownDescription": "Denies the run_native_orchestration command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_mcp_server_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-mcp-server-config",
+          "markdownDescription": "Denies the save_mcp_server_config command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_model_selection_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-model-selection-settings",
+          "markdownDescription": "Denies the save_model_selection_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_project command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-project",
+          "markdownDescription": "Denies the save_project command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_provider_config command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-provider-config",
+          "markdownDescription": "Denies the save_provider_config command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_routing_policy command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-routing-policy",
+          "markdownDescription": "Denies the save_routing_policy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_user_preferences command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-user-preferences",
+          "markdownDescription": "Denies the save_user_preferences command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the search_ultranote command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-search-ultranote",
+          "markdownDescription": "Denies the search_ultranote command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_native_orchestration_paused command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-native-orchestration-paused",
+          "markdownDescription": "Denies the set_native_orchestration_paused command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the subscribe_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-subscribe-run",
+          "markdownDescription": "Denies the subscribe_run command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the test_mcp_server command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-test-mcp-server",
+          "markdownDescription": "Denies the test_mcp_server command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the test_provider_connection command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-test-provider-connection",
+          "markdownDescription": "Denies the test_provider_connection command without any pre-configured scope."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

@@ -48,6 +48,7 @@
         "enable": true,
         "scope": [
           "D:\\LunaScopeData\\companion\\models\\**",
+          "D:\\LunaScopeData\\companion\\preload\\**",
           "D:\\LunaScopeData\\companion\\runtime\\**"
         ]
       }
