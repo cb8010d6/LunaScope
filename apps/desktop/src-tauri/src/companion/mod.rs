@@ -1,9 +1,12 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    sync::OnceLock,
 };
 
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
@@ -19,6 +22,7 @@ const MAX_MODEL_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_LIVE2D_CORE_BYTES: usize = 4 * 1024 * 1024;
 const LIVE2D_CORE_URL: &str =
     "https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js";
+const LIVE2D_CORE_SHA256: &str = "25ae938cb4fe282ce189b357bcc97e603d1e1f7ec78bf04150d401c23cdc792f";
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -42,6 +46,7 @@ pub(crate) struct CompanionPreferencesInput {
 pub(crate) struct CompanionSettings {
     enabled: bool,
     model_path: Option<String>,
+    atlas_path: Option<String>,
     model_name: Option<String>,
     model_kind: CompanionModelKind,
     live2d_core_path: Option<String>,
@@ -54,6 +59,7 @@ impl Default for CompanionSettings {
         Self {
             enabled: false,
             model_path: None,
+            atlas_path: None,
             model_name: None,
             model_kind: CompanionModelKind::Spine38,
             live2d_core_path: None,
@@ -69,6 +75,13 @@ pub(crate) struct CompanionActivity {
     phase: String,
     title: String,
     detail: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CompanionRendererStatus {
+    state: String,
+    message: String,
 }
 
 fn companion_root() -> Result<PathBuf, String> {
@@ -95,7 +108,17 @@ fn read_settings() -> Result<CompanionSettings, String> {
     let settings =
         serde_json::from_slice::<CompanionSettings>(&fs::read(path).map_err(display_error)?)
             .map_err(display_error)?;
-    Ok(normalize_settings(settings))
+    let mut settings = normalize_settings(settings);
+    if matches!(settings.model_kind, CompanionModelKind::Live2d)
+        && settings
+            .live2d_core_path
+            .as_deref()
+            .is_some_and(|path| !live2d_core_is_pinned(Path::new(path)))
+    {
+        settings.enabled = false;
+        settings.live2d_core_path = None;
+    }
+    Ok(settings)
 }
 
 fn write_settings(settings: &CompanionSettings) -> Result<(), String> {
@@ -106,6 +129,35 @@ fn write_settings(settings: &CompanionSettings) -> Result<(), String> {
     fs::create_dir_all(parent).map_err(display_error)?;
     let bytes = serde_json::to_vec_pretty(settings).map_err(display_error)?;
     fs::write(path, bytes).map_err(display_error)
+}
+
+fn require_window(window: &tauri::WebviewWindow, allowed: &[&str]) -> Result<(), String> {
+    if allowed.contains(&window.label()) {
+        Ok(())
+    } else {
+        Err("this companion command is not available to the current window".into())
+    }
+}
+
+pub(super) fn require_main_window(window: &tauri::WebviewWindow) -> Result<(), String> {
+    require_window(window, &["main"])
+}
+
+#[tauri::command]
+pub(crate) fn companion_report_renderer_status(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    status: CompanionRendererStatus,
+) -> Result<(), String> {
+    require_window(&window, &["companion"])?;
+    if !matches!(status.state.as_str(), "disabled" | "ready" | "error") {
+        return Err("invalid companion renderer state".into());
+    }
+    if status.message.len() > 2_000 {
+        return Err("companion renderer message is too long".into());
+    }
+    app.emit_to("main", "companion:renderer-status", status)
+        .map_err(display_error)
 }
 
 fn set_window_visibility(app: &AppHandle, settings: &CompanionSettings) {
@@ -126,15 +178,20 @@ pub(crate) fn restore_window_visibility(app: &AppHandle) {
 }
 
 #[tauri::command]
-pub(crate) fn companion_get_settings() -> Result<CompanionSettings, String> {
+pub(crate) fn companion_get_settings(
+    window: tauri::WebviewWindow,
+) -> Result<CompanionSettings, String> {
+    require_window(&window, &["main", "companion"])?;
     read_settings()
 }
 
 #[tauri::command]
 pub(crate) fn companion_save_preferences(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     preferences: CompanionPreferencesInput,
 ) -> Result<CompanionSettings, String> {
+    require_window(&window, &["main", "companion"])?;
     let current = read_settings()?;
     let settings = normalize_settings(CompanionSettings {
         enabled: preferences.enabled,
@@ -218,6 +275,9 @@ fn is_live2d_model_asset(path: &Path) -> bool {
         ".jpg",
         ".jpeg",
         ".webp",
+        ".wav",
+        ".mp3",
+        ".ogg",
         ".motion3.json",
         ".exp3.json",
         ".physics3.json",
@@ -276,6 +336,110 @@ fn collect_live2d_files(
     Ok(())
 }
 
+fn live2d_reference_path(root: &Path, value: &str, field: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(value);
+    if value.is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(format!("Live2D {field} contains an unsafe path: {value}"));
+    }
+    let path = root.join(relative);
+    let metadata = fs::symlink_metadata(&path)
+        .map_err(|_| format!("Live2D {field} references a missing file: {value}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(format!(
+            "Live2D {field} must reference a regular file: {value}"
+        ));
+    }
+    if !is_live2d_model_asset(&path) {
+        return Err(format!(
+            "Live2D {field} references an unsupported file type: {value}"
+        ));
+    }
+    Ok(path)
+}
+
+fn validate_live2d_manifest_references(source: &Path) -> Result<Vec<PathBuf>, String> {
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(source).map_err(display_error)?)
+            .map_err(|error| format!("invalid Live2D model manifest: {error}"))?;
+    let references = manifest
+        .get("FileReferences")
+        .and_then(serde_json::Value::as_object)
+        .ok_or("Live2D manifest is missing FileReferences")?;
+    let root = source
+        .parent()
+        .ok_or("selected Live2D manifest has no parent directory")?;
+    let moc = references
+        .get("Moc")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or("Live2D manifest needs a Moc")?;
+    let textures = references
+        .get("Textures")
+        .and_then(serde_json::Value::as_array)
+        .filter(|value| !value.is_empty())
+        .ok_or("Live2D manifest needs at least one texture")?;
+
+    let mut files = vec![live2d_reference_path(root, moc, "Moc")?];
+    for texture in textures {
+        let value = texture
+            .as_str()
+            .ok_or("Live2D Textures entries must be paths")?;
+        files.push(live2d_reference_path(root, value, "Textures")?);
+    }
+    for field in ["Physics", "Pose", "UserData", "DisplayInfo"] {
+        if let Some(value) = references.get(field) {
+            let value = value
+                .as_str()
+                .ok_or_else(|| format!("Live2D {field} must be a path"))?;
+            files.push(live2d_reference_path(root, value, field)?);
+        }
+    }
+    if let Some(expressions) = references.get("Expressions") {
+        for expression in expressions
+            .as_array()
+            .ok_or("Live2D Expressions must be an array")?
+        {
+            let value = expression
+                .get("File")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("Live2D Expressions entries need a File path")?;
+            files.push(live2d_reference_path(root, value, "Expressions")?);
+        }
+    }
+    if let Some(motions) = references.get("Motions") {
+        for entries in motions
+            .as_object()
+            .ok_or("Live2D Motions must be an object")?
+            .values()
+        {
+            for motion in entries
+                .as_array()
+                .ok_or("Live2D motion groups must be arrays")?
+            {
+                let value = motion
+                    .get("File")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or("Live2D motion entries need a File path")?;
+                files.push(live2d_reference_path(root, value, "Motions")?);
+                if let Some(sound) = motion.get("Sound") {
+                    let value = sound.as_str().ok_or("Live2D motion Sound must be a path")?;
+                    files.push(live2d_reference_path(root, value, "Motion Sound")?);
+                }
+            }
+        }
+    }
+    Ok(files)
+}
+
+pub(super) fn validate_live2d_manifest(source: &Path) -> Result<(), String> {
+    validate_live2d_manifest_references(source).map(|_| ())
+}
+
 fn live2d_model_files(source: &Path) -> Result<(PathBuf, Vec<PathBuf>), String> {
     let name = source
         .file_name()
@@ -285,57 +449,53 @@ fn live2d_model_files(source: &Path) -> Result<(PathBuf, Vec<PathBuf>), String> 
     if !name.ends_with(".model3.json") {
         return Err("select a Cubism 3/4/5 .model3.json file".into());
     }
-    let manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(source).map_err(display_error)?)
-            .map_err(|error| format!("invalid Live2D model manifest: {error}"))?;
-    let references = manifest
-        .get("FileReferences")
-        .and_then(serde_json::Value::as_object)
-        .ok_or("Live2D manifest is missing FileReferences")?;
-    if references
-        .get("Moc")
-        .and_then(serde_json::Value::as_str)
-        .is_none_or(|value| value.is_empty())
-        || references
-            .get("Textures")
-            .and_then(serde_json::Value::as_array)
-            .is_none_or(|value| value.is_empty())
-    {
-        return Err("Live2D manifest needs a Moc and at least one texture".into());
-    }
     let root = source
         .parent()
         .ok_or("selected Live2D manifest has no parent directory")?
         .to_path_buf();
+    let referenced = validate_live2d_manifest_references(source)?;
     let mut files = Vec::new();
     let mut total_bytes = 0_u64;
     collect_live2d_files(&root, &root, 0, &mut files, &mut total_bytes)?;
     if !files.iter().any(|path| path == source)
-        || !files.iter().any(|path| {
-            path.extension()
-                .and_then(|value| value.to_str())
-                .is_some_and(|value| value.eq_ignore_ascii_case("moc3"))
-        })
+        || referenced
+            .iter()
+            .any(|reference| !files.iter().any(|path| path == reference))
     {
-        return Err("Live2D model manifest or .moc3 file is missing".into());
+        return Err("Live2D manifest references an unavailable runtime asset".into());
     }
     Ok((root, files))
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn live2d_core_is_pinned(path: &Path) -> bool {
+    fs::read(path)
+        .map(|bytes| sha256_hex(&bytes) == LIVE2D_CORE_SHA256)
+        .unwrap_or(false)
+}
+
 async fn ensure_live2d_core() -> Result<PathBuf, String> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    let _guard = LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
     let destination = companion_root()?
         .join("runtime")
         .join("live2dcubismcore.min.js");
-    if let Ok(bytes) = fs::read(&destination) {
-        if bytes
-            .windows(b"Live2DCubismCore".len())
-            .any(|value| value == b"Live2DCubismCore")
-        {
-            return Ok(destination);
-        }
+    if live2d_core_is_pinned(&destination) {
+        return Ok(destination);
     }
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(display_error)?;
     let response = client
@@ -356,25 +516,42 @@ async fn ensure_live2d_core() -> Result<PathBuf, String> {
     {
         return Err("Live2D Cubism Core exceeds 4 MiB".into());
     }
-    let bytes = response.bytes().await.map_err(display_error)?;
-    if bytes.len() > MAX_LIVE2D_CORE_BYTES
-        || !bytes
-            .windows(b"Live2DCubismCore".len())
-            .any(|value| value == b"Live2DCubismCore")
-    {
-        return Err("Live2D Cubism Core response failed validation".into());
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(display_error)?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_LIVE2D_CORE_BYTES {
+            return Err("Live2D Cubism Core exceeds 4 MiB".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    if sha256_hex(&bytes) != LIVE2D_CORE_SHA256 {
+        return Err("Live2D Cubism Core digest does not match the pinned official build".into());
     }
     fs::create_dir_all(destination.parent().ok_or("invalid Live2D runtime path")?)
         .map_err(display_error)?;
-    fs::write(&destination, bytes).map_err(display_error)?;
+    let staging = destination.with_extension(format!("{}.download", Uuid::new_v4()));
+    let result = (|| {
+        fs::write(&staging, bytes).map_err(display_error)?;
+        if destination.exists() {
+            fs::remove_file(&destination).map_err(display_error)?;
+        }
+        fs::rename(&staging, &destination).map_err(display_error)
+    })();
+    if let Err(error) = result {
+        let _ = fs::remove_file(staging);
+        return Err(error);
+    }
     Ok(destination)
 }
 
 #[tauri::command]
 pub(crate) async fn companion_import_model(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     source_path: String,
 ) -> Result<CompanionSettings, String> {
+    require_main_window(&window)?;
     let source = PathBuf::from(source_path)
         .canonicalize()
         .map_err(display_error)?;
@@ -382,7 +559,7 @@ pub(crate) async fn companion_import_model(
         .extension()
         .and_then(|value| value.to_str())
         .is_some_and(|value| value.eq_ignore_ascii_case("skel"));
-    let (model_kind, source_root, files, model_name, live2d_core_path) = if is_spine {
+    let (model_kind, source_root, files, model_name, atlas_file, live2d_core_path) = if is_spine {
         let root = source
             .parent()
             .ok_or("selected Spine file has no parent directory")?
@@ -393,11 +570,27 @@ pub(crate) async fn companion_import_model(
             .filter(|value| !value.is_empty())
             .ok_or("selected Spine file has an invalid name")?
             .to_owned();
+        let asset_set = avatar::spine_assets::validate_spine_asset_dir(
+            &root,
+            source
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or("selected Spine file has an invalid name")?,
+        )?;
+        let expected_atlas = format!("{name}.atlas");
+        let atlas = asset_set
+            .atlas_files
+            .iter()
+            .find(|value| value.eq_ignore_ascii_case(&expected_atlas))
+            .or_else(|| asset_set.atlas_files.first())
+            .cloned()
+            .ok_or("selected Spine model has no atlas")?;
         (
             CompanionModelKind::Spine38,
             root,
             spine_model_files(&source)?,
             name,
+            Some(atlas),
             None,
         )
     } else {
@@ -415,53 +608,80 @@ pub(crate) async fn companion_import_model(
             root,
             files,
             name,
+            None,
             Some(core.to_string_lossy().into_owned()),
         )
     };
-    let destination =
-        companion_root()?
-            .join("models")
-            .join(format!("{}-{}", model_name, Uuid::new_v4()));
-    fs::create_dir_all(&destination).map_err(display_error)?;
-    for file in files {
-        let relative = file
-            .strip_prefix(&source_root)
-            .map_err(|_| "model asset escaped its selected directory")?;
-        let target = destination.join(relative);
-        fs::create_dir_all(target.parent().ok_or("model asset has no parent")?)
-            .map_err(display_error)?;
-        fs::copy(&file, target).map_err(display_error)?;
-    }
+    let models_root = companion_root()?.join("models");
+    fs::create_dir_all(&models_root).map_err(display_error)?;
+    let import_id = Uuid::new_v4();
+    let destination = models_root.join(format!("{}-{import_id}", model_name));
+    let staging = models_root.join(format!(".{import_id}.import"));
+    fs::create_dir(&staging).map_err(display_error)?;
     let imported_model = destination.join(
         source
             .file_name()
             .ok_or("selected Spine file has no file name")?,
     );
     let local_model_id = format!("local-{}", Uuid::new_v4().simple());
-    models::write_local_model_metadata(
-        &destination,
-        &local_model_id,
-        &model_name,
-        model_kind,
-        source
-            .file_name()
-            .and_then(|value| value.to_str())
-            .ok_or("selected model has an invalid file name")?,
-    )?;
-    let mut settings = read_settings()?;
+    let install_result = (|| {
+        for file in files {
+            let relative = file
+                .strip_prefix(&source_root)
+                .map_err(|_| "model asset escaped its selected directory")?;
+            let target = staging.join(relative);
+            fs::create_dir_all(target.parent().ok_or("model asset has no parent")?)
+                .map_err(display_error)?;
+            fs::copy(&file, target).map_err(display_error)?;
+        }
+        models::write_local_model_metadata(
+            &staging,
+            &local_model_id,
+            &model_name,
+            model_kind,
+            source
+                .file_name()
+                .and_then(|value| value.to_str())
+                .ok_or("selected model has an invalid file name")?,
+            atlas_file.as_deref(),
+            "local",
+        )?;
+        fs::rename(&staging, &destination).map_err(display_error)
+    })();
+    if let Err(error) = install_result {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+    let mut settings = match read_settings() {
+        Ok(settings) => settings,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&destination);
+            return Err(error);
+        }
+    };
     settings.enabled = true;
     settings.model_path = Some(imported_model.to_string_lossy().into_owned());
+    settings.atlas_path =
+        atlas_file.map(|value| destination.join(value).to_string_lossy().into_owned());
     settings.model_name = Some(model_name);
     settings.model_kind = model_kind;
     settings.live2d_core_path = live2d_core_path;
-    write_settings(&settings)?;
+    if let Err(error) = write_settings(&settings) {
+        let _ = fs::remove_dir_all(&destination);
+        return Err(error);
+    }
     set_window_visibility(&app, &settings);
     let _ = app.emit_to("companion", "companion:settings", &settings);
     Ok(settings)
 }
 
 #[tauri::command]
-pub(crate) fn companion_set_activity(app: AppHandle, activity: CompanionActivity) {
+pub(crate) fn companion_set_activity(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    activity: CompanionActivity,
+) -> Result<(), String> {
+    require_main_window(&window)?;
     let phase = match activity.phase.as_str() {
         "idle" | "working" | "reviewing" | "running" | "success" | "failed" | "waiting" => {
             activity.phase
@@ -470,6 +690,7 @@ pub(crate) fn companion_set_activity(app: AppHandle, activity: CompanionActivity
     };
     let payload = CompanionActivity { phase, ..activity };
     let _ = app.emit_to("companion", "companion:activity", payload);
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -487,92 +708,110 @@ pub(crate) struct AvatarLayerImportInput {
 }
 
 #[tauri::command]
-pub(crate) fn companion_avatar_requirements() -> serde_json::Value {
-    avatar::requirements()
+pub(crate) fn companion_avatar_requirements(
+    window: tauri::WebviewWindow,
+) -> Result<serde_json::Value, String> {
+    require_main_window(&window)?;
+    Ok(avatar::requirements())
 }
 
 #[tauri::command]
-pub(crate) fn companion_list_avatar_packs() -> Result<Vec<serde_json::Value>, String> {
+pub(crate) fn companion_list_avatar_packs(
+    window: tauri::WebviewWindow,
+) -> Result<Vec<serde_json::Value>, String> {
+    require_main_window(&window)?;
     avatar::load_registry(&companion_root()?)
 }
 
 #[tauri::command]
 pub(crate) fn companion_create_avatar_pack(
+    window: tauri::WebviewWindow,
     input: avatar::AvatarPackCreateInput,
 ) -> Result<avatar::AvatarPackLifecycleResult, String> {
+    require_main_window(&window)?;
     avatar::create_standard_pack(input)
 }
 
 #[tauri::command]
 pub(crate) fn companion_duplicate_avatar_pack(
+    window: tauri::WebviewWindow,
     input: avatar::AvatarPackDuplicateInput,
 ) -> Result<avatar::AvatarPackLifecycleResult, String> {
+    require_main_window(&window)?;
     avatar::duplicate_pack(input)
 }
 
 #[tauri::command]
 pub(crate) fn companion_delete_avatar_pack(
+    window: tauri::WebviewWindow,
     input: avatar::AvatarPackInput,
 ) -> Result<avatar::AvatarPackLifecycleResult, String> {
+    require_main_window(&window)?;
     avatar::delete_pack(&avatar::path_from_input(input))
 }
 
 #[tauri::command]
 pub(crate) fn companion_repack_avatar_pack(
+    window: tauri::WebviewWindow,
     input: avatar::AvatarPackInput,
 ) -> Result<avatar::AvatarPackLifecycleResult, String> {
+    require_main_window(&window)?;
     avatar::repack_pack(&avatar::path_from_input(input))
 }
 
 #[tauri::command]
 pub(crate) fn companion_load_avatar_manifest(
+    window: tauri::WebviewWindow,
     input: avatar::AvatarPackInput,
 ) -> Result<avatar::AvatarPackManifest, String> {
+    require_main_window(&window)?;
     avatar::load_manifest(&avatar::path_from_input(input))
 }
 
 #[tauri::command]
 pub(crate) fn companion_save_avatar_manifest(
+    window: tauri::WebviewWindow,
     input: avatar::AvatarPackInput,
     manifest: avatar::AvatarPackManifest,
 ) -> Result<avatar::AvatarValidation, String> {
+    require_main_window(&window)?;
     avatar::save_manifest(&avatar::path_from_input(input), manifest)
 }
 
 #[tauri::command]
 pub(crate) fn companion_validate_avatar_pack(
+    window: tauri::WebviewWindow,
     input: avatar::AvatarPackInput,
-) -> avatar::AvatarValidation {
-    avatar::validate_pack(&avatar::path_from_input(input))
+) -> Result<avatar::AvatarValidation, String> {
+    require_main_window(&window)?;
+    Ok(avatar::validate_pack(&avatar::path_from_input(input)))
 }
 
 #[tauri::command]
 pub(crate) fn companion_register_avatar_pack(
+    window: tauri::WebviewWindow,
     input: avatar::AvatarPackInput,
 ) -> Result<avatar::AvatarImportResult, String> {
+    require_main_window(&window)?;
     avatar::register_pack(&avatar::path_from_input(input), &companion_root()?)
 }
 
 #[tauri::command]
 pub(crate) fn companion_install_avatar_pack(
+    window: tauri::WebviewWindow,
     input: avatar::AvatarPackInput,
 ) -> Result<avatar::AvatarRuntimeInstallResult, String> {
+    require_main_window(&window)?;
     let source = avatar::path_from_input(input);
-    let installed = avatar::install_runtime_pack(&source, &companion_root()?)?;
-    models::write_local_model_metadata(
-        Path::new(&installed.runtime_path),
-        &installed.validation.id,
-        &installed.validation.name,
-        CompanionModelKind::Spine38,
-        &installed.skel,
-    )?;
-    Ok(installed)
+    avatar::install_runtime_pack(&source, &companion_root()?)
 }
 
 #[tauri::command]
 pub(crate) fn companion_import_avatar_layers(
+    window: tauri::WebviewWindow,
     input: AvatarLayerImportInput,
 ) -> Result<Vec<String>, String> {
+    require_main_window(&window)?;
     let root = PathBuf::from(&input.pack_path)
         .canonicalize()
         .map_err(|error| format!("Cannot open avatar pack: {error}"))?;
@@ -625,9 +864,11 @@ pub(crate) fn companion_import_avatar_layers(
 
 #[tauri::command]
 pub(crate) fn companion_read_avatar_asset(
+    window: tauri::WebviewWindow,
     input: avatar::AvatarPackInput,
     relative_path: String,
 ) -> Result<AvatarAssetBytes, String> {
+    require_main_window(&window)?;
     let root = avatar::path_from_input(input)
         .canonicalize()
         .map_err(display_error)?;
@@ -671,6 +912,14 @@ mod tests {
     }
 
     #[test]
+    fn sha256_helper_matches_a_known_digest() {
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
     fn only_spine_runtime_assets_are_imported() {
         assert!(is_spine_model_asset(Path::new("character.skel")));
         assert!(is_spine_model_asset(Path::new("character.ATLAS")));
@@ -680,6 +929,7 @@ mod tests {
         assert!(is_live2d_model_asset(Path::new("character.model3.json")));
         assert!(is_live2d_model_asset(Path::new("idle.motion3.json")));
         assert!(is_live2d_model_asset(Path::new("character.moc3")));
+        assert!(is_live2d_model_asset(Path::new("voice.ogg")));
         assert!(!is_live2d_model_asset(Path::new("setup.js")));
     }
 
@@ -704,5 +954,41 @@ mod tests {
         assert_eq!(collected_root, root);
         assert_eq!(files.len(), 3);
         assert!(!files.iter().any(|path| path.ends_with("setup.js")));
+    }
+
+    #[test]
+    fn live2d_manifest_rejects_paths_outside_the_model_root() {
+        let temporary = tempfile::tempdir().expect("temporary Live2D model");
+        let root = temporary.path().join("model");
+        fs::create_dir_all(&root).expect("model directory");
+        fs::write(temporary.path().join("outside.moc3"), b"MOC3").expect("outside moc");
+        fs::write(root.join("texture.png"), b"png").expect("texture");
+        let manifest = root.join("avatar.model3.json");
+        fs::write(
+            &manifest,
+            r#"{"FileReferences":{"Moc":"../outside.moc3","Textures":["texture.png"]}}"#,
+        )
+        .expect("manifest");
+
+        let error = live2d_model_files(&manifest).expect_err("path traversal must fail");
+
+        assert!(error.contains("unsafe path"));
+    }
+
+    #[test]
+    fn live2d_manifest_requires_each_referenced_file() {
+        let temporary = tempfile::tempdir().expect("temporary Live2D model");
+        let root = temporary.path();
+        fs::write(root.join("avatar.moc3"), b"MOC3").expect("moc");
+        let manifest = root.join("avatar.model3.json");
+        fs::write(
+            &manifest,
+            r#"{"FileReferences":{"Moc":"avatar.moc3","Textures":["missing.png"]}}"#,
+        )
+        .expect("manifest");
+
+        let error = live2d_model_files(&manifest).expect_err("missing reference must fail");
+
+        assert!(error.contains("missing file"));
     }
 }

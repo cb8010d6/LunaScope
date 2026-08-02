@@ -1,12 +1,14 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 import type { CompanionPhase, CompanionSettings } from "./types";
+import { encodeSpineAssetUrl } from "./vendor/asset-url.js";
 import { Application, Ticker } from "./vendor/pixi-runtime.js";
 import { SpinePlayer } from "./vendor/spine-player.js";
 
 export interface CompanionRenderer {
   init(): Promise<void>;
   applyPhase(phase: CompanionPhase): void;
+  captureFrame?(): string | null;
   destroy(): void;
 }
 
@@ -21,6 +23,8 @@ export class Spine38Renderer implements CompanionRenderer {
       server: { origin: "" },
       spine: {
         assetUrl: convertFileSrc(settings.modelPath),
+        assetDirConfigured: true,
+        atlasUrl: settings.atlasPath ? encodeSpineAssetUrl(convertFileSrc(settings.atlasPath)) : undefined,
         skel: settings.modelPath.split(/[\\/]/).pop() ?? "model.skel",
         scale: settings.scale,
         offsetX: 0,
@@ -57,6 +61,10 @@ export class Spine38Renderer implements CompanionRenderer {
       { state: phase, source: "lunascope-native" },
       true,
     );
+  }
+
+  captureFrame(): string | null {
+    return this.player.captureFrame();
   }
 
   destroy(): void {
@@ -133,6 +141,7 @@ export class Live2DRenderer implements CompanionRenderer {
       autoDensity: true,
       resolution: Math.min(window.devicePixelRatio || 1, 2),
     });
+    this.app = app;
     this.stage.appendChild(app.view);
     const modelPath = this.settings.modelPath!;
     const separator = Math.max(modelPath.lastIndexOf("\\"), modelPath.lastIndexOf("/"));
@@ -202,7 +211,6 @@ export class Live2DRenderer implements CompanionRenderer {
     model.scale.set(fit * this.settings.scale);
     model.position.set(width / 2, height);
     app.stage.addChild(model);
-    this.app = app;
     this.model = model;
     this.applyPhase(this.pendingPhase);
   }

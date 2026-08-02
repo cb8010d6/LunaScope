@@ -10,6 +10,9 @@
     "core:event:allow-unlisten",
     "core:window:allow-hide",
     "core:window:allow-show",
-    "core:window:allow-start-dragging"
+    "core:window:allow-start-dragging",
+    "allow-companion-get-settings",
+    "allow-companion-save-preferences",
+    "allow-companion-report-renderer-status"
   ]
 }

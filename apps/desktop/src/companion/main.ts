@@ -18,6 +18,7 @@ const appWindow = getCurrentWindow();
 let renderer: CompanionRenderer | null = null;
 let settings: CompanionSettings | null = null;
 let bubbleTimer = 0;
+let settingsGeneration = 0;
 
 function showError(message: string): void {
   if (!errorElement) return;
@@ -26,24 +27,41 @@ function showError(message: string): void {
 }
 
 async function applySettings(next: CompanionSettings): Promise<void> {
+  const generation = ++settingsGeneration;
   settings = next;
-  if (!next.enabled || !next.modelPath) {
-    await appWindow.hide();
-    return;
-  }
   renderer?.destroy();
   renderer = null;
+  if (!next.enabled || !next.modelPath) {
+    await appWindow.hide();
+    void invoke("companion_report_renderer_status", {
+      status: { state: "disabled", message: "" },
+    }).catch(() => undefined);
+    return;
+  }
   if (!stage) return;
   errorElement?.setAttribute("hidden", "");
   const instance = companionRenderer(stage, next);
   try {
     await instance.init();
+    if (generation !== settingsGeneration) {
+      instance.destroy();
+      return;
+    }
     instance.applyPhase("idle");
     renderer = instance;
     await appWindow.show();
+    void invoke("companion_report_renderer_status", {
+      status: { state: "ready", message: "" },
+    }).catch(() => undefined);
   } catch (error) {
     instance.destroy();
-    showError(`Spine 模型加载失败：${String(error)}`);
+    if (generation !== settingsGeneration) return;
+    const message = `模型加载失败：${String(error)}`;
+    console.error(message);
+    showError(message);
+    void invoke("companion_report_renderer_status", {
+      status: { state: "error", message },
+    }).catch(() => undefined);
   }
 }
 

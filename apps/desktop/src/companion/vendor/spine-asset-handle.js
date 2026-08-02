@@ -1,4 +1,5 @@
 import * as PIXI from "pixi.js";
+import { joinSpineAssetUrl, spineAssetDirectoryUrl } from "./asset-url.js";
 
 const DEFAULT_RESOURCE_NAME = "spine-companion-asset";
 
@@ -155,14 +156,47 @@ function defaultLoadAsset(identity, context) {
   context.setLoader(loader);
   return new Promise((resolve, reject) => {
     let settled = false;
-    const fail = (error) => {
+    const fail = (error, _loader, resource) => {
       if (settled) return;
       settled = true;
-      reject(error instanceof Error ? error : new Error(String(error || "Unable to load Spine asset.")));
+      const failedUrl = resource?.url || "unknown-url";
+      const detail = error instanceof Error ? error.message : String(error || "Unable to load Spine asset.");
+      reject(new Error(`${detail} [resource: ${failedUrl}]`));
     };
 
     loader.onError?.add?.(fail);
-    loader.add(context.resourceName, context.url);
+    const metadata = {
+      ...(context.metadata || {}),
+      imageLoader: (imageLoader, namePrefix, baseUrl, imageOptions) => {
+        const root = spineAssetDirectoryUrl(context.metadata?.spineAtlasFile || context.url)
+          || (baseUrl && !baseUrl.endsWith("/") ? `${baseUrl}/` : baseUrl);
+        return (line, callback) => {
+          const name = `${namePrefix}${line}`;
+          const url = joinSpineAssetUrl(root || "", line);
+          const cached = imageLoader.resources[name];
+          if (cached) {
+            const done = () => {
+              const baseTexture = cached.texture?.baseTexture || null;
+              if (baseTexture && line.includes("-pma.") && context.pixi?.ALPHA_MODES?.PMA !== undefined) {
+                baseTexture.alphaMode = context.pixi.ALPHA_MODES.PMA;
+              }
+              callback(baseTexture);
+            };
+            if (cached.texture) done();
+            else cached.onAfterMiddleware?.add?.(done);
+            return;
+          }
+          imageLoader.add(name, url, imageOptions, (resource) => {
+            const baseTexture = resource?.error ? null : resource?.texture?.baseTexture || null;
+            if (baseTexture && line.includes("-pma.") && context.pixi?.ALPHA_MODES?.PMA !== undefined) {
+              baseTexture.alphaMode = context.pixi.ALPHA_MODES.PMA;
+            }
+            callback(baseTexture);
+          });
+        };
+      }
+    };
+    loader.add(context.resourceName, context.url, { metadata });
     loader.load((_loader, resources) => {
       if (settled) return;
       const resource = resources?.[context.resourceName];
@@ -272,6 +306,7 @@ export class SpineAssetRegistry {
         identity: resourceIdentity,
         url: options.url || identity,
         resourceName: options.resourceName || DEFAULT_RESOURCE_NAME,
+        metadata: options.metadata || null,
         refs: 0,
         status: "idle",
         promise: null,
@@ -304,6 +339,7 @@ export class SpineAssetRegistry {
           key: entry.key,
           url: entry.url,
           resourceName: entry.resourceName,
+          metadata: entry.metadata,
           pixi: this.pixi,
           setLoader: (loader) => { entry.loader = loader; }
         });

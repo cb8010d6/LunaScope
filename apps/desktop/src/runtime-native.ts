@@ -2,6 +2,7 @@ import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  disposeCompanionSettingsPreview,
   handleCompanionSettingsAction,
   renderCompanionSettings,
   syncCompanionActivity,
@@ -427,6 +428,7 @@ function applyUiLanguage(): void {
     general: ["通用", "General"],
     providers: ["模型与提供商", "Models & Providers"],
     "skills-mcp": ["技能与 MCP", "Skills & MCP"],
+    companion: ["桌面伙伴", "Desktop Companion"],
     projects: ["项目与文件夹", "Projects & Folders"],
     ultranote: ["UltraNote", "UltraNote"],
   };
@@ -4177,6 +4179,7 @@ function renderToolRoutingDecision(decision: ToolRoutingDecision): void {
 }
 
 function showSettingsPage(page: string, button: HTMLButtonElement): void {
+  if (page !== "companion") disposeCompanionSettingsPreview();
   history.replaceState(null, "", `#/settings/${page}`);
   applyUiLanguage();
   document

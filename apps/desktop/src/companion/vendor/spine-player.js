@@ -426,7 +426,12 @@ export class SpinePlayer {
     let lastError = null;
     const identity = spineAssetUrl(config);
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
-      const handle = acquireSpineAsset(identity, { resourceName: "companion" });
+      const handle = acquireSpineAsset(identity, {
+        resourceName: "companion",
+        metadata: this.config.spine.atlasUrl
+          ? { spineAtlasFile: this.config.spine.atlasUrl }
+          : undefined
+      });
       try {
         const resource = await handle.load();
         return { resource, handle, identity };
@@ -1073,6 +1078,63 @@ export class SpinePlayer {
       interactiveBounds: this.getInteractiveBounds(),
       recoveryBounds: this.getPointerRecoveryBounds()
     };
+  }
+
+  captureFrame(width = 512, height = 512) {
+    const renderer = this.app?.renderer;
+    const extract = renderer?.plugins?.extract;
+    if (!renderer || !extract || !this.spine) return null;
+    renderer.render(this.app.stage);
+    const source = extract.canvas();
+    if (!source?.width || !source?.height) return null;
+    const sourceContext = source.getContext("2d", { willReadFrequently: true });
+    if (!sourceContext) return null;
+    const pixels = sourceContext.getImageData(0, 0, source.width, source.height).data;
+    let minX = source.width;
+    let minY = source.height;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < source.height; y += 1) {
+      for (let x = 0; x < source.width; x += 1) {
+        if (pixels[(y * source.width + x) * 4 + 3] <= 8) continue;
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+    if (maxX < minX || maxY < minY) return null;
+    const contentWidth = maxX - minX + 1;
+    const contentHeight = maxY - minY + 1;
+    const cropPaddingX = Math.max(2, Math.round(contentWidth * 0.04));
+    const cropPaddingY = Math.max(2, Math.round(contentHeight * 0.04));
+    const cropX = Math.max(0, minX - cropPaddingX);
+    const cropY = Math.max(0, minY - cropPaddingY);
+    const cropWidth = Math.min(source.width - cropX, contentWidth + cropPaddingX * 2);
+    const cropHeight = Math.min(source.height - cropY, contentHeight + cropPaddingY * 2);
+    const output = document.createElement("canvas");
+    output.width = Math.max(1, Math.round(width));
+    output.height = Math.max(1, Math.round(height));
+    const context = output.getContext("2d");
+    if (!context) return null;
+    const availableWidth = output.width - 64;
+    const availableHeight = output.height - 64;
+    const scale = Math.min(availableWidth / cropWidth, availableHeight / cropHeight);
+    const drawWidth = Math.max(1, Math.round(cropWidth * scale));
+    const drawHeight = Math.max(1, Math.round(cropHeight * scale));
+    context.clearRect(0, 0, output.width, output.height);
+    context.drawImage(
+      source,
+      cropX,
+      cropY,
+      cropWidth,
+      cropHeight,
+      Math.round((output.width - drawWidth) / 2),
+      output.height - drawHeight - 24,
+      drawWidth,
+      drawHeight
+    );
+    return output.toDataURL("image/webp", 0.84);
   }
 
   destroy() {

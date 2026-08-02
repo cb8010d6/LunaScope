@@ -6,6 +6,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:companion-assets": "node --no-warnings --test apps/desktop/src/companion/vendor/asset-url.test.mjs",
     "contract:check": "tsc -p packages/runtime-contract/tsconfig.json --noEmit",
     "tauri": "tauri"
   },

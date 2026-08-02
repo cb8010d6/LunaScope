@@ -1269,6 +1269,11 @@ pub fn run() {
                 .map_err(std::io::Error::other)?;
             ensure_extension_directories().map_err(std::io::Error::other)?;
             ensure_builtin_mcp_configs(&store).map_err(std::io::Error::other)?;
+            if let Err(error) =
+                tauri::async_runtime::block_on(companion::models::cleanup_preload_cache())
+            {
+                eprintln!("failed to clean companion preload cache during startup: {error}");
+            }
             app.manage(AppState {
                 store: Arc::new(store),
                 credentials: KeyringCredentialStore,
@@ -1312,6 +1317,7 @@ pub fn run() {
             companion::companion_save_preferences,
             companion::companion_import_model,
             companion::companion_set_activity,
+            companion::companion_report_renderer_status,
             companion::companion_avatar_requirements,
             companion::companion_list_avatar_packs,
             companion::companion_create_avatar_pack,
@@ -1327,6 +1333,7 @@ pub fn run() {
             companion::companion_read_avatar_asset,
             companion::models::companion_search_catalog,
             companion::models::companion_list_installed_models,
+            companion::models::companion_preload_catalog_models,
             companion::models::companion_install_catalog_model,
             companion::models::companion_activate_installed_model,
             companion::models::companion_remove_installed_model,
@@ -1361,8 +1368,37 @@ pub fn run() {
             route_tools,
             default_workspace_root
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run LunaScope desktop");
+        .build(tauri::generate_context!())
+        .expect("failed to build LunaScope desktop")
+        .run(|app, event| {
+            if let tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::CloseRequested { api, .. },
+                ..
+            } = event
+                && label == "main"
+            {
+                api.prevent_close();
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        companion::models::cleanup_preload_cache(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => eprintln!(
+                            "failed to clean companion preload cache during shutdown: {error}"
+                        ),
+                        Err(_) => eprintln!(
+                            "companion preload cleanup timed out; next startup will retry"
+                        ),
+                    }
+                    app.exit(0);
+                });
+            }
+        });
 }
 
 #[cfg(test)]
@@ -1430,6 +1466,44 @@ mod tests {
             .read_resource(&pipeline.catalog_id, ".claude/CLAUDE.md")
             .expect("Claude package instructions");
         assert!(claude_instructions.contains("Routing"));
+    }
+
+    #[test]
+    fn companion_capability_exposes_only_its_three_app_commands() {
+        let capabilities: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/gen/schemas/capabilities.json"
+        )))
+        .expect("generated Tauri capabilities");
+        let permissions = capabilities["companion"]["permissions"]
+            .as_array()
+            .expect("companion permissions")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .filter(|permission| !permission.starts_with("core:"))
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            permissions,
+            std::collections::BTreeSet::from([
+                "allow-companion-get-settings",
+                "allow-companion-report-renderer-status",
+                "allow-companion-save-preferences",
+            ])
+        );
+        assert_eq!(
+            capabilities["default"]["permissions"]
+                .as_array()
+                .and_then(|permissions| permissions.iter().find_map(|permission| {
+                    (permission.as_str() == Some("main-app-commands"))
+                        .then_some("main-app-commands")
+                })),
+            Some("main-app-commands")
+        );
+        let main_permissions = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/permissions/main-app-commands.toml"
+        ));
+        assert!(main_permissions.contains("allow-companion-preload-catalog-models"));
     }
 
     #[test]

@@ -10,6 +10,7 @@ export type CompanionPhase =
 export type CompanionSettings = {
   enabled: boolean;
   modelPath: string | null;
+  atlasPath: string | null;
   modelName: string | null;
   modelKind: "spine38" | "live2d";
   live2dCorePath: string | null;
