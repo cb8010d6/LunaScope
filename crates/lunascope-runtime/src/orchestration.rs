@@ -10,9 +10,10 @@ use lunascope_core::{
 use thiserror::Error;
 use uuid::Uuid;
 
-pub const MAX_PARALLEL_WORKERS: u32 = 4;
+pub const MAX_PARALLEL_WORKERS: u32 = 8;
+pub const DEFAULT_PARALLEL_WORKERS: u32 = 6;
 pub const MAX_WORKER_DEPTH: u32 = 2;
-pub const MAX_WORKERS: usize = 12;
+pub const MAX_WORKERS: usize = 24;
 const MAX_WORKER_TIMEOUT_MS: u64 = 30 * 60 * 1000;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -27,6 +28,7 @@ pub struct TaskAnalysis {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelWorkerDraft {
+    pub display_name: String,
     pub role: String,
     pub task: String,
     pub prompt: String,
@@ -35,6 +37,8 @@ pub struct ModelWorkerDraft {
     pub tools: Vec<String>,
     pub write_scopes: Vec<String>,
     pub completion_criteria: Vec<String>,
+    pub owned_acceptance_criteria: Vec<String>,
+    pub parallel_group: Option<String>,
     pub skills: Vec<String>,
 }
 
@@ -227,7 +231,7 @@ pub fn draft_orchestration(
         conversation_title: None,
         domain_pack: None,
         decision,
-        maximum_parallel_workers: MAX_PARALLEL_WORKERS,
+        maximum_parallel_workers: DEFAULT_PARALLEL_WORKERS,
         maximum_worker_depth: MAX_WORKER_DEPTH,
         parent_permissions,
         allowed_worker_models,
@@ -259,6 +263,7 @@ pub fn draft_orchestration_from_model(
     drafts.truncate(MAX_WORKERS);
     if drafts.is_empty() {
         drafts.push(ModelWorkerDraft {
+            display_name: "Complete the request".into(),
             role: "builder".into(),
             task: "Complete the user request directly and verify the result.".into(),
             prompt: "Complete the user request in the assigned workspace. Inspect before editing, use the available tools, make the requested changes, and verify the result.".into(),
@@ -271,6 +276,8 @@ pub fn draft_orchestration_from_model(
             ],
             write_scopes: vec![".".into()],
             completion_criteria: vec!["the requested workspace change exists".into()],
+            owned_acceptance_criteria: Vec::new(),
+            parallel_group: None,
             skills: Vec::new(),
         });
     }
@@ -278,6 +285,7 @@ pub fn draft_orchestration_from_model(
         drafts.truncate(1);
     } else if drafts.len() == 1 {
         drafts.push(ModelWorkerDraft {
+            display_name: "Verify the completed work".into(),
             role: "verifier".into(),
             task: "Independently verify the first Worker's output against the user request.".into(),
             prompt: "Independently inspect the completed work and run the most relevant available checks. Report only evidence you actually observed.".into(),
@@ -287,6 +295,8 @@ pub fn draft_orchestration_from_model(
             tools: vec!["filesystem.read".into(), "process.run".into()],
             write_scopes: Vec::new(),
             completion_criteria: vec!["verification cites observed evidence".into()],
+            owned_acceptance_criteria: Vec::new(),
+            parallel_group: None,
             skills: Vec::new(),
         });
     }
@@ -331,7 +341,7 @@ pub fn draft_orchestration_from_model(
     let worker_ids = (0..drafts.len())
         .map(|_| WorkerId::new(format!("worker-{}", Uuid::new_v4())))
         .collect::<Vec<_>>();
-    let workers = drafts
+    let mut workers = drafts
         .iter()
         .enumerate()
         .map(|(index, draft)| {
@@ -376,6 +386,11 @@ pub fn draft_orchestration_from_model(
                 capabilities,
             );
             spec.worker_id = worker_ids[index].clone();
+            spec.display_name = if draft.display_name.trim().is_empty() {
+                draft.task.trim().chars().take(72).collect()
+            } else {
+                draft.display_name.trim().to_owned()
+            };
             if !draft.prompt.trim().is_empty() {
                 spec.prompt = draft.prompt.trim().to_owned();
             }
@@ -416,6 +431,18 @@ pub fn draft_orchestration_from_model(
                     spec.completion_criteria.push(criterion.clone());
                 }
             }
+            spec.owned_acceptance_criteria = draft
+                .owned_acceptance_criteria
+                .iter()
+                .filter(|criterion| !criterion.trim().is_empty())
+                .cloned()
+                .collect();
+            spec.parallel_group = draft
+                .parallel_group
+                .as_deref()
+                .map(str::trim)
+                .filter(|group| !group.is_empty())
+                .map(str::to_owned);
             spec.skills = draft.skills.clone();
             spec.model.reason = format!(
                 "selected from the Worker Model Pool by the Orchestration model for {}",
@@ -423,7 +450,8 @@ pub fn draft_orchestration_from_model(
             );
             spec
         })
-        .collect();
+        .collect::<Vec<_>>();
+    assign_dependency_parallel_groups(&mut workers);
     let plan = OrchestrationPlan {
         orchestration_id: OrchestrationId::new(format!("orc-{}", Uuid::new_v4())),
         version: 1,
@@ -433,7 +461,7 @@ pub fn draft_orchestration_from_model(
         conversation_title: None,
         domain_pack: None,
         decision,
-        maximum_parallel_workers: MAX_PARALLEL_WORKERS,
+        maximum_parallel_workers: DEFAULT_PARALLEL_WORKERS,
         maximum_worker_depth: MAX_WORKER_DEPTH,
         parent_permissions,
         allowed_worker_models,
@@ -443,6 +471,28 @@ pub fn draft_orchestration_from_model(
     };
     ensure_valid(&plan)?;
     Ok(plan)
+}
+
+fn assign_dependency_parallel_groups(workers: &mut [WorkerSpec]) {
+    let mut levels = BTreeMap::<WorkerId, usize>::new();
+    let mut counts = BTreeMap::<usize, usize>::new();
+
+    for worker in workers.iter() {
+        let level = worker
+            .dependencies
+            .iter()
+            .filter_map(|dependency| levels.get(dependency))
+            .max()
+            .map_or(0, |dependency_level| dependency_level.saturating_add(1));
+        levels.insert(worker.worker_id.clone(), level);
+        *counts.entry(level).or_default() += 1;
+    }
+
+    for worker in workers.iter_mut() {
+        let level = levels.get(&worker.worker_id).copied().unwrap_or_default();
+        worker.parallel_group = (counts.get(&level).copied().unwrap_or_default() > 1)
+            .then(|| format!("parallel-wave-{}", level.saturating_add(1)));
+    }
 }
 
 fn worker(
@@ -458,6 +508,7 @@ fn worker(
     let worker_id = WorkerId::new(format!("worker-{}", Uuid::new_v4()));
     WorkerSpec {
         worker_id,
+        display_name: task.trim().chars().take(72).collect(),
         role: role.into(),
         tags: default_role_tags(role),
         objective: objective.into(),
@@ -541,11 +592,15 @@ fn worker(
             "output matches the declared schema".into(),
             "claims are supported by explicit evidence".into(),
         ],
+        owned_acceptance_criteria: Vec::new(),
+        parallel_group: None,
         model: ModelSelection {
             provider: allowed_model.provider.clone(),
             model: allowed_model.model.clone(),
             reason: format!("selected from the allowed Worker Model Pool for role {role}"),
             fallback: false,
+            reasoning_effort: None,
+            custom_reasoning_effort: None,
         },
         skills: Vec::new(),
         tools,
@@ -635,8 +690,12 @@ pub fn validate_orchestration(plan: &OrchestrationPlan) -> OrchestrationValidati
         .iter()
         .map(|worker| (&worker.worker_id, worker))
         .collect::<BTreeMap<_, _>>();
+    let mut execution_criteria_owners = BTreeSet::new();
+    let mut verifier_criteria_owners = BTreeSet::new();
     for worker in &plan.workers {
-        if worker.role.trim().is_empty()
+        if worker.display_name.trim().is_empty()
+            || worker.display_name.chars().count() > 72
+            || worker.role.trim().is_empty()
             || worker.objective.trim().is_empty()
             || worker.task.trim().is_empty()
             || worker.prompt.trim().is_empty()
@@ -644,7 +703,31 @@ pub fn validate_orchestration(plan: &OrchestrationPlan) -> OrchestrationValidati
             || worker.completion_criteria.is_empty()
         {
             errors.push(format!(
-                "{} is missing a required role/task/prompt/output field",
+                "{} is missing a bounded display name or required role/task/prompt/output field",
+                worker.worker_id
+            ));
+        }
+        for criterion in &worker.owned_acceptance_criteria {
+            if !plan.user_hard_constraints.is_empty()
+                && !plan.user_hard_constraints.contains(criterion)
+            {
+                errors.push(format!(
+                    "{} owns an acceptance criterion outside the task-wide contract",
+                    worker.worker_id
+                ));
+            }
+            if worker.role.eq_ignore_ascii_case("verifier") {
+                verifier_criteria_owners.insert(criterion);
+            } else {
+                execution_criteria_owners.insert(criterion);
+            }
+        }
+        if plan.decision.kind == DelegationKind::MultiAgent
+            && !role_defaults_to_read_only(&worker.role)
+            && worker_assignment_is_vague(worker)
+        {
+            errors.push(format!(
+                "{} has a broad assignment; split it into one module, function cluster, asset group, test cluster, or bounded defect",
                 worker.worker_id
             ));
         }
@@ -688,9 +771,9 @@ pub fn validate_orchestration(plan: &OrchestrationPlan) -> OrchestrationValidati
         if worker.timeout_ms == 0 || worker.timeout_ms > MAX_WORKER_TIMEOUT_MS {
             errors.push(format!("{} has an invalid timeout", worker.worker_id));
         }
-        if worker.retry_policy.maximum_attempts == 0 || worker.retry_policy.maximum_attempts > 3 {
+        if worker.retry_policy.maximum_attempts == 0 {
             errors.push(format!(
-                "{} maximum attempts must be between 1 and 3",
+                "{} maximum attempts must be at least 1",
                 worker.worker_id
             ));
         }
@@ -736,6 +819,29 @@ pub fn validate_orchestration(plan: &OrchestrationPlan) -> OrchestrationValidati
             ));
         }
     }
+    if !plan.user_hard_constraints.is_empty() {
+        for criterion in &plan.user_hard_constraints {
+            if !execution_criteria_owners.contains(criterion)
+                && !verifier_criteria_owners.contains(criterion)
+            {
+                errors.push(format!(
+                    "task-wide acceptance criterion has no Worker owner: {}",
+                    criterion
+                ));
+            }
+            if plan
+                .workers
+                .iter()
+                .any(|worker| worker.role.eq_ignore_ascii_case("verifier"))
+                && !verifier_criteria_owners.contains(criterion)
+            {
+                errors.push(format!(
+                    "independent verifier does not cover task-wide acceptance criterion: {}",
+                    criterion
+                ));
+            }
+        }
+    }
     let topological_order = topological_order(plan).unwrap_or_else(|| {
         errors.push("worker dependency graph contains a cycle".into());
         Vec::new()
@@ -747,6 +853,50 @@ pub fn validate_orchestration(plan: &OrchestrationPlan) -> OrchestrationValidati
         warnings,
         topological_order,
     }
+}
+
+fn worker_assignment_is_vague(worker: &WorkerSpec) -> bool {
+    let assignment = format!(
+        "{} {} {}",
+        worker.display_name, worker.task, worker.expected_output
+    )
+    .to_lowercase();
+    let explicitly_bounded = [
+        "module",
+        "function",
+        "component",
+        "migration",
+        "test",
+        "asset",
+        "parser",
+        "renderer",
+        "模块",
+        "函数",
+        "组件",
+        "迁移",
+        "测试",
+        "资源",
+        "解析",
+        "渲染",
+        "集成",
+    ]
+    .iter()
+    .any(|term| assignment.contains(term));
+    let broad = [
+        "complete the project",
+        "complete project",
+        "implement the project",
+        "implement the complete",
+        "implement the entire",
+        "build the whole",
+        "整个项目",
+        "完整项目",
+        "完成全部",
+        "实现全部",
+    ]
+    .iter()
+    .any(|term| assignment.contains(term));
+    broad && !explicitly_bounded
 }
 
 fn topological_order(plan: &OrchestrationPlan) -> Option<Vec<WorkerId>> {
@@ -974,6 +1124,7 @@ fn apply_worker_patch(
             }
         };
     }
+    replace!(display_name, WorkerField::DisplayName);
     replace!(role, WorkerField::Role);
     replace!(tags, WorkerField::Tags);
     replace!(objective, WorkerField::Objective);
@@ -983,6 +1134,14 @@ fn apply_worker_patch(
     replace!(expected_output, WorkerField::ExpectedOutput);
     replace!(output_schema, WorkerField::OutputSchema);
     replace!(completion_criteria, WorkerField::CompletionCriteria);
+    replace!(
+        owned_acceptance_criteria,
+        WorkerField::OwnedAcceptanceCriteria
+    );
+    if let Some(parallel_group) = &patch.parallel_group {
+        worker.parallel_group = parallel_group.clone();
+        changed.push(WorkerField::ParallelGroup);
+    }
     replace!(model, WorkerField::Model);
     replace!(skills, WorkerField::Skills);
     replace!(tools, WorkerField::Tools);
@@ -1051,6 +1210,7 @@ pub fn merge_orchestrator_revision(
 fn preserve_locked(current: &WorkerSpec, proposed: &mut WorkerSpec) {
     for field in &current.locked_fields {
         match field {
+            WorkerField::DisplayName => proposed.display_name = current.display_name.clone(),
             WorkerField::Role => proposed.role = current.role.clone(),
             WorkerField::Tags => proposed.tags = current.tags.clone(),
             WorkerField::Objective => proposed.objective = current.objective.clone(),
@@ -1063,6 +1223,12 @@ fn preserve_locked(current: &WorkerSpec, proposed: &mut WorkerSpec) {
             WorkerField::OutputSchema => proposed.output_schema = current.output_schema.clone(),
             WorkerField::CompletionCriteria => {
                 proposed.completion_criteria = current.completion_criteria.clone();
+            }
+            WorkerField::OwnedAcceptanceCriteria => {
+                proposed.owned_acceptance_criteria = current.owned_acceptance_criteria.clone();
+            }
+            WorkerField::ParallelGroup => {
+                proposed.parallel_group = current.parallel_group.clone();
             }
             WorkerField::Model => proposed.model = current.model.clone(),
             WorkerField::Skills => proposed.skills = current.skills.clone(),
@@ -1169,6 +1335,28 @@ mod tests {
     }
 
     #[test]
+    fn worker_retry_attempts_are_not_limited_to_three() {
+        let mut plan = draft_orchestration(
+            "Research and implement multiple modules, then verify",
+            vec![model()],
+            permissions(),
+        )
+        .expect("draft");
+        plan.workers[0].retry_policy.maximum_attempts = 7;
+        assert!(validate_orchestration(&plan).valid);
+
+        plan.workers[0].retry_policy.maximum_attempts = 0;
+        let validation = validate_orchestration(&plan);
+        assert!(!validation.valid);
+        assert!(
+            validation
+                .errors
+                .iter()
+                .any(|error| error.contains("must be at least 1"))
+        );
+    }
+
+    #[test]
     fn rejects_cycles_parent_permission_escalation_and_parallel_write_overlap() {
         let mut plan = draft_orchestration(
             "Research and implement multiple modules, then verify",
@@ -1206,6 +1394,7 @@ mod tests {
             &analyze_objective("Implement frontend and backend modules, then verify them"),
         );
         let write_draft = |role: &str| ModelWorkerDraft {
+            display_name: format!("Implement {role} module"),
             role: role.into(),
             task: format!("Implement the {role} portion"),
             prompt: format!("Write and verify the {role} files"),
@@ -1214,6 +1403,8 @@ mod tests {
             tools: vec!["filesystem.read".into(), "filesystem.patch".into()],
             write_scopes: vec![".".into()],
             completion_criteria: vec![format!("{role} files exist")],
+            owned_acceptance_criteria: Vec::new(),
+            parallel_group: None,
             skills: Vec::new(),
         };
         let plan = draft_orchestration_from_model(
@@ -1229,7 +1420,100 @@ mod tests {
             plan.workers[1].dependencies,
             vec![plan.workers[0].worker_id.clone()]
         );
+        assert!(
+            plan.workers[0].parallel_group.is_none()
+                || plan.workers[0].parallel_group != plan.workers[1].parallel_group,
+            "conflicting writers must not share an explicit runtime parallel group"
+        );
         assert!(validate_orchestration(&plan).valid);
+    }
+
+    #[test]
+    fn model_draft_assigns_a_stable_parallel_group_to_independent_units() {
+        let decision = DelegationDecision {
+            kind: DelegationKind::MultiAgent,
+            rationale: "Independent modules can be completed concurrently.".into(),
+            expected_benefit: "The critical path is shorter without write conflicts.".into(),
+            estimated_duration: "medium".into(),
+            estimated_cost: "medium".into(),
+        };
+        let draft = |name: &str, scope: &str| ModelWorkerDraft {
+            display_name: format!("Implement {name} module"),
+            role: "builder".into(),
+            task: format!("Implement only the {name} module"),
+            prompt: format!("Write and verify only {scope}"),
+            expected_output: format!("Verified {scope}"),
+            dependency_indices: Vec::new(),
+            tools: vec!["filesystem.read".into(), "filesystem.patch".into()],
+            write_scopes: vec![scope.into()],
+            completion_criteria: vec![format!("{scope} exists and passes its checks")],
+            owned_acceptance_criteria: Vec::new(),
+            parallel_group: None,
+            skills: Vec::new(),
+        };
+        let plan = draft_orchestration_from_model(
+            "Implement independently testable parser and renderer modules.",
+            vec![model()],
+            permissions(),
+            decision,
+            vec![
+                draft("parser", "src/parser.rs"),
+                draft("renderer", "src/renderer.rs"),
+            ],
+        )
+        .expect("independent units should form a valid parallel wave");
+
+        assert_eq!(
+            plan.workers[0].parallel_group,
+            plan.workers[1].parallel_group
+        );
+        assert_eq!(
+            plan.workers[0].parallel_group.as_deref(),
+            Some("parallel-wave-1")
+        );
+        assert!(
+            plan.workers
+                .iter()
+                .all(|worker| worker.dependencies.is_empty())
+        );
+    }
+
+    #[test]
+    fn model_draft_defers_acceptance_ownership_validation_until_contract_attachment() {
+        let criterion = "The parser rejects malformed input".to_owned();
+        let mut plan = draft_orchestration_from_model(
+            "Implement one bounded parser function and its tests.",
+            vec![model()],
+            permissions(),
+            DelegationDecision {
+                kind: DelegationKind::SingleAgent,
+                rationale: "One isolated module is sufficient.".into(),
+                expected_benefit: "No coordination overhead.".into(),
+                estimated_duration: "short".into(),
+                estimated_cost: "low".into(),
+            },
+            vec![ModelWorkerDraft {
+                display_name: "Implement parser validation".into(),
+                role: "builder".into(),
+                task: "Implement the parser validation function and its focused tests.".into(),
+                prompt: "Edit only src/parser.rs and tests/parser.rs, then run the parser tests."
+                    .into(),
+                expected_output: "Parser implementation and passing focused test evidence.".into(),
+                dependency_indices: Vec::new(),
+                tools: vec!["filesystem.read".into(), "filesystem.patch".into()],
+                write_scopes: vec!["src/parser.rs".into(), "tests/parser.rs".into()],
+                completion_criteria: vec![criterion.clone()],
+                owned_acceptance_criteria: vec![criterion.clone()],
+                parallel_group: None,
+                skills: Vec::new(),
+            }],
+        )
+        .expect("the global contract is attached immediately after model graph conversion");
+
+        plan.user_hard_constraints = vec![criterion];
+        assert!(validate_orchestration(&plan).valid);
+        plan.user_hard_constraints = vec!["A different requirement".into()];
+        assert!(!validate_orchestration(&plan).valid);
     }
 
     #[test]
@@ -1239,6 +1523,7 @@ mod tests {
             &analyze_objective("Implement frontend and backend modules, then verify them"),
         );
         let default_write_draft = |role: &str| ModelWorkerDraft {
+            display_name: format!("Implement {role} module"),
             role: role.into(),
             task: format!("Implement the {role} portion"),
             prompt: format!("Write and verify the {role} files"),
@@ -1247,6 +1532,8 @@ mod tests {
             tools: Vec::new(),
             write_scopes: Vec::new(),
             completion_criteria: vec![format!("{role} files exist")],
+            owned_acceptance_criteria: Vec::new(),
+            parallel_group: None,
             skills: Vec::new(),
         };
         let plan = draft_orchestration_from_model(
@@ -1286,6 +1573,7 @@ mod tests {
             estimated_cost: "medium".into(),
         };
         let draft = |role: &str, dependency_indices: Vec<usize>| ModelWorkerDraft {
+            display_name: format!("Complete {role} stage"),
             role: role.into(),
             task: format!("Complete the {role} stage"),
             prompt: format!("Execute and verify the {role} stage"),
@@ -1294,6 +1582,8 @@ mod tests {
             tools: vec!["filesystem.read".into()],
             write_scopes: Vec::new(),
             completion_criteria: vec![format!("{role} stage is complete")],
+            owned_acceptance_criteria: Vec::new(),
+            parallel_group: None,
             skills: Vec::new(),
         };
         let plan = draft_orchestration_from_model(
@@ -1312,7 +1602,7 @@ mod tests {
         )
         .expect("sequential stages beyond the parallel limit must be preserved");
 
-        assert_eq!(plan.maximum_parallel_workers, MAX_PARALLEL_WORKERS);
+        assert_eq!(plan.maximum_parallel_workers, DEFAULT_PARALLEL_WORKERS);
         assert_eq!(plan.workers.len(), 6);
         assert_eq!(plan.workers[4].role, "reviewer");
         assert_eq!(plan.workers[5].role, "verifier");
@@ -1332,6 +1622,7 @@ mod tests {
             estimated_cost: "medium".into(),
         };
         let writable = |role: &str, scope: &str| ModelWorkerDraft {
+            display_name: format!("Write {role} files"),
             role: role.into(),
             task: format!("Complete the {role} stage"),
             prompt: format!("Write and verify the {role} files"),
@@ -1340,9 +1631,12 @@ mod tests {
             tools: vec!["filesystem.read".into(), "filesystem.patch".into()],
             write_scopes: vec![scope.into()],
             completion_criteria: vec![format!("{role} files exist")],
+            owned_acceptance_criteria: Vec::new(),
+            parallel_group: None,
             skills: Vec::new(),
         };
         let read_only = |role: &str| ModelWorkerDraft {
+            display_name: format!("Inspect {role} stage"),
             role: role.into(),
             task: format!("Complete the {role} stage"),
             prompt: format!("Inspect the {role} stage"),
@@ -1351,6 +1645,8 @@ mod tests {
             tools: vec!["filesystem.read".into()],
             write_scopes: Vec::new(),
             completion_criteria: vec![format!("{role} stage is complete")],
+            owned_acceptance_criteria: Vec::new(),
+            parallel_group: None,
             skills: Vec::new(),
         };
         let plan = draft_orchestration_from_model(
@@ -1417,6 +1713,7 @@ mod tests {
             operations: vec![OrchestrationPatchOperation::UpdateWorker {
                 patch: WorkerPatch {
                     worker_id: worker_id.clone(),
+                    display_name: None,
                     role: None,
                     tags: Some(vec!["user-owned".into(), "research".into()]),
                     objective: None,
@@ -1426,6 +1723,8 @@ mod tests {
                     expected_output: None,
                     output_schema: None,
                     completion_criteria: None,
+                    owned_acceptance_criteria: None,
+                    parallel_group: None,
                     model: None,
                     skills: None,
                     tools: None,

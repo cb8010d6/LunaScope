@@ -57,6 +57,12 @@ impl SseDecoder {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NormalizedProviderEvent {
+    TransportRetryScheduled {
+        attempt: u32,
+        maximum_retries: u32,
+        delay_seconds: u64,
+        reason: String,
+    },
     TextDelta {
         sequence: u64,
         delta: String,
@@ -77,6 +83,7 @@ pub enum NormalizedProviderEvent {
     Usage {
         input_tokens: Option<u64>,
         output_tokens: Option<u64>,
+        cached_input_tokens: Option<u64>,
     },
     Completed {
         response_id: String,
@@ -95,6 +102,7 @@ pub struct NormalizedToolCall {
 pub struct ProviderUsage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
+    pub cached_input_tokens: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -102,6 +110,9 @@ pub struct NormalizedStreamSummary {
     pub response_id: String,
     pub text: String,
     pub reasoning_summaries: Vec<String>,
+    /// Provider-private reasoning required only for protocol-continuity replay.
+    /// It is never emitted as a normalized event or persisted by LunaScope.
+    pub private_reasoning: Option<String>,
     pub tool_calls: Vec<NormalizedToolCall>,
     pub usage: ProviderUsage,
     pub stop_reason: Option<String>,
@@ -121,6 +132,7 @@ pub struct ProtocolNormalizer {
     response_id: Option<String>,
     text: String,
     reasoning_summaries: BTreeMap<u64, String>,
+    private_reasoning: String,
     tools: BTreeMap<u64, ToolBuffer>,
     usage: ProviderUsage,
     stop_reason: Option<String>,
@@ -136,6 +148,7 @@ impl ProtocolNormalizer {
             response_id: None,
             text: String::new(),
             reasoning_summaries: BTreeMap::new(),
+            private_reasoning: String::new(),
             tools: BTreeMap::new(),
             usage: ProviderUsage::default(),
             stop_reason: None,
@@ -182,6 +195,8 @@ impl ProtocolNormalizer {
                 .ok_or(StreamProtocolError::MissingResponseId)?,
             text: self.text,
             reasoning_summaries: self.reasoning_summaries.into_values().collect(),
+            private_reasoning: (!self.private_reasoning.is_empty())
+                .then_some(self.private_reasoning),
             tool_calls,
             usage: self.usage,
             stop_reason: self.stop_reason,
@@ -265,6 +280,9 @@ impl ProtocolNormalizer {
                 self.usage.output_tokens = value
                     .pointer("/response/usage/output_tokens")
                     .and_then(Value::as_u64);
+                self.usage.cached_input_tokens = value
+                    .pointer("/response/usage/input_tokens_details/cached_tokens")
+                    .and_then(Value::as_u64);
                 Ok(vec![self.completed_event()])
             }
             "response.failed" | "response.incomplete" | "error" => {
@@ -301,9 +319,16 @@ impl ProtocolNormalizer {
                 });
             }
         }
-        // Some OpenAI-compatible Providers expose a summarized reasoning channel.
-        // Deliberately do not consume `reasoning_content`, which can contain raw
-        // chain-of-thought rather than a user-safe summary.
+        // Some OpenAI-compatible Providers require private reasoning replay when
+        // a thinking turn contains tool calls. Capture it only for the next
+        // protocol request; never emit it as a public normalized event.
+        if let Some(delta) = choice
+            .pointer("/delta/reasoning_content")
+            .and_then(Value::as_str)
+        {
+            self.private_reasoning.push_str(delta);
+        }
+        // A separate reasoning_summary channel is safe for the user-facing UI.
         if let Some(delta) = choice
             .pointer("/delta/reasoning_summary")
             .and_then(Value::as_str)
@@ -383,6 +408,9 @@ impl ProtocolNormalizer {
                 self.usage.input_tokens = value
                     .pointer("/message/usage/input_tokens")
                     .and_then(Value::as_u64);
+                self.usage.cached_input_tokens = value
+                    .pointer("/message/usage/cache_read_input_tokens")
+                    .and_then(Value::as_u64);
                 Ok(Vec::new())
             }
             "content_block_start" => {
@@ -449,6 +477,7 @@ impl ProtocolNormalizer {
                 Ok(vec![NormalizedProviderEvent::Usage {
                     input_tokens: self.usage.input_tokens,
                     output_tokens: self.usage.output_tokens,
+                    cached_input_tokens: self.usage.cached_input_tokens,
                 }])
             }
             "message_stop" => {
@@ -470,9 +499,13 @@ impl ProtocolNormalizer {
         let usage = value.get("usage")?;
         self.usage.input_tokens = usage.get("prompt_tokens").and_then(Value::as_u64);
         self.usage.output_tokens = usage.get("completion_tokens").and_then(Value::as_u64);
+        self.usage.cached_input_tokens = usage
+            .pointer("/prompt_tokens_details/cached_tokens")
+            .and_then(Value::as_u64);
         Some(NormalizedProviderEvent::Usage {
             input_tokens: self.usage.input_tokens,
             output_tokens: self.usage.output_tokens,
+            cached_input_tokens: self.usage.cached_input_tokens,
         })
     }
 
@@ -656,7 +689,7 @@ mod tests {
                     "choices":[{"delta":{"tool_calls":[{
                         "index":0,"function":{"arguments":"1}"}
                     }]},"finish_reason":"tool_calls"}],
-                    "usage":{"prompt_tokens":10,"completion_tokens":4}
+                    "usage":{"prompt_tokens":10,"completion_tokens":4,"prompt_tokens_details":{"cached_tokens":6}}
                 }),
             ))
             .unwrap();
@@ -664,6 +697,7 @@ mod tests {
         assert_eq!(summary.text, "Hi");
         assert_eq!(summary.tool_calls[0].arguments, serde_json::json!({"x":1}));
         assert_eq!(summary.usage.input_tokens, Some(10));
+        assert_eq!(summary.usage.cached_input_tokens, Some(6));
         assert_eq!(summary.stop_reason.as_deref(), Some("tool_calls"));
     }
 
@@ -674,7 +708,7 @@ mod tests {
             serde_json::json!({"type":"response.created","sequence_number":1,"response":{"id":"resp_reasoning"}}),
             serde_json::json!({"type":"response.reasoning_summary_text.delta","sequence_number":2,"item_id":"rs_1","summary_index":0,"delta":"Inspecting the workspace"}),
             serde_json::json!({"type":"response.reasoning_summary_text.delta","sequence_number":3,"item_id":"rs_1","summary_index":0,"delta":" before editing."}),
-            serde_json::json!({"type":"response.completed","sequence_number":4,"response":{"id":"resp_reasoning","usage":{"input_tokens":4,"output_tokens":8}}}),
+            serde_json::json!({"type":"response.completed","sequence_number":4,"response":{"id":"resp_reasoning","usage":{"input_tokens":4,"output_tokens":8,"input_tokens_details":{"cached_tokens":3}}}}),
         ] {
             responses.ingest(frame(None, value)).unwrap();
         }
@@ -683,6 +717,7 @@ mod tests {
             summary.reasoning_summaries,
             vec!["Inspecting the workspace before editing."]
         );
+        assert_eq!(summary.usage.cached_input_tokens, Some(3));
 
         let mut chat = ProtocolNormalizer::new(ProviderProtocol::OpenAiChatCompletions);
         chat.ingest(frame(
@@ -701,6 +736,10 @@ mod tests {
         .unwrap();
         let summary = chat.finish().unwrap();
         assert_eq!(summary.reasoning_summaries, vec!["Checking requirements."]);
+        assert_eq!(
+            summary.private_reasoning.as_deref(),
+            Some("private raw chain")
+        );
         assert!(
             !summary
                 .reasoning_summaries

@@ -65,6 +65,17 @@ the install dialog:
   payloads and bounded OOXML embedded-image extraction under their published
   permissive licenses.
 
+## Independent vision fallback
+
+- [Anionex codex-vision-proxy](https://github.com/Anionex/codex-vision-proxy),
+  pinned reference revision `2f4355de79da296ed0a31a8974d273b40bd31b6f`,
+  MIT License. LunaScope adopts its focus-hint, bounded concurrency, content
+  cache, and fail-closed image-to-text bridge design. The implementation is an
+  independent native Rust integration; LunaScope does not bundle or execute the
+  upstream Python sidecar. Visual content is treated as inert data, and a failed
+  vision request never falls through by forwarding raw images to a text-only
+  model.
+
 ## HarmonyOS Sans
 
 LunaScope uses **HarmonyOS Sans SC** for all user-interface typography.
@@ -90,6 +101,7 @@ LunaScope's runtime prompt, activity projection, and Skill format were independe
 
 - OpenAI Codex, Apache-2.0: <https://github.com/openai/codex>
 - OpenCode, MIT: <https://github.com/anomalyco/opencode>
+- Pi, MIT: <https://github.com/earendil-works/pi>
 - Model Context Protocol reference servers, Apache-2.0 / MIT by component: <https://github.com/modelcontextprotocol/servers>
 - GitHub MCP Server, MIT: <https://github.com/github/github-mcp-server>
 

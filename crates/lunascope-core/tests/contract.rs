@@ -1,8 +1,10 @@
 use std::{fs, path::PathBuf};
 
 use lunascope_core::{
-    CorrelationId, EventData, EventEnvelope, EventId, EventSource, EventType, ProjectId, RunId,
-    RunState, ThreadId, WorkerState,
+    AgentActivityItem, AgentKind, CorrelationId, EventData, EventEnvelope, EventId, EventSource,
+    EventType, OrchestrationRevisionRecord, ProjectId, ReasoningSummarySource, RunControlKind,
+    RunControlRecord, RunControlStatus, RunId, RunState, RuntimeSnapshot, SupervisorDecisionKind,
+    SupervisorDecisionRecord, ThreadId, WorkerId, WorkerState,
 };
 
 fn workspace_path(relative: &str) -> PathBuf {
@@ -34,7 +36,7 @@ fn sample_event() -> EventEnvelope {
 fn envelope_constructor_keeps_type_and_payload_consistent() {
     let event = sample_event();
     assert_eq!(event.event_type, EventType::RunCreated);
-    assert_eq!(event.schema_version, 1);
+    assert_eq!(event.schema_version, 2);
     assert!(event.validate().is_ok());
 }
 
@@ -66,8 +68,26 @@ fn serialization_uses_public_contract_casing() {
     let value = serde_json::to_value(sample_event()).expect("event serializes");
     assert_eq!(value["eventType"], "run_created");
     assert_eq!(value["payload"]["kind"], "run_created");
-    assert_eq!(value["schemaVersion"], 1);
+    assert_eq!(value["schemaVersion"], 2);
     assert_eq!(value["redactionState"], "not_required");
+}
+
+#[test]
+fn v1_envelopes_deserialize_without_agent_relationship_fields() {
+    let mut value = serde_json::to_value(sample_event()).expect("event serializes");
+    value["schemaVersion"] = serde_json::json!(1);
+    for key in [
+        "agentSessionId",
+        "parentSessionId",
+        "parentEventId",
+        "relatedToolEventId",
+    ] {
+        value.as_object_mut().expect("object").remove(key);
+    }
+    let event: EventEnvelope = serde_json::from_value(value).expect("v1 event remains readable");
+    assert_eq!(event.schema_version, 1);
+    assert!(event.agent_session_id.is_none());
+    assert!(event.parent_event_id.is_none());
 }
 
 #[test]
@@ -192,4 +212,85 @@ fn checked_in_json_schema_is_current_and_requires_durable_fields() {
             "schema must require {field}"
         );
     }
+}
+
+#[test]
+fn projection_retains_public_activity_controls_and_supervisor_revisions() {
+    let run_id = RunId::from("run-observable");
+    let mut snapshot = RuntimeSnapshot::empty(run_id.clone());
+    let payloads = vec![
+        EventData::RunCreated {
+            title: "Observable run".into(),
+            initial_prompt: "Build and verify the project".into(),
+        },
+        EventData::RunControlRecorded {
+            record: RunControlRecord {
+                control_id: "control-1".into(),
+                control: RunControlKind::Guidance,
+                status: RunControlStatus::Applied,
+                summary: "Prioritize the failing acceptance check".into(),
+                affected_worker_ids: vec![WorkerId::from("worker-1")],
+                created_at: "2026-08-03T00:00:00Z".into(),
+            },
+        },
+        EventData::AgentActivityRecorded {
+            item: AgentActivityItem {
+                activity_id: "activity-1".into(),
+                agent_kind: AgentKind::Worker,
+                agent_id: "worker-1".into(),
+                display_name: "Repair focused test".into(),
+                worker_id: Some(WorkerId::from("worker-1")),
+                phase: "verification".into(),
+                waiting_for_model: false,
+                observation: "The focused test failed".into(),
+                decision: "Repair only the failing path".into(),
+                next_action: "Patch and rerun the focused test".into(),
+                evidence_refs: vec!["test:focused#failure".into()],
+                source: ReasoningSummarySource::ModelCommentary,
+                created_at: "2026-08-03T00:00:01Z".into(),
+            },
+        },
+        EventData::SupervisorDecisionRecorded {
+            record: SupervisorDecisionRecord {
+                decision_id: "decision-1".into(),
+                kind: SupervisorDecisionKind::ReviseQueued,
+                summary: "Update the queued verifier with current evidence".into(),
+                affected_worker_ids: vec![WorkerId::from("worker-2")],
+                evidence_refs: vec!["activity:activity-1".into()],
+                created_at: "2026-08-03T00:00:02Z".into(),
+            },
+        },
+        EventData::OrchestrationRevisionRecorded {
+            record: OrchestrationRevisionRecord {
+                revision_id: "revision-1".into(),
+                from_version: 1,
+                to_version: 2,
+                reason: "Guidance changed the verification target".into(),
+                affected_worker_ids: vec![WorkerId::from("worker-2")],
+                summary: "Verifier now checks the repaired path".into(),
+                created_at: "2026-08-03T00:00:03Z".into(),
+            },
+        },
+    ];
+
+    for (index, payload) in payloads.into_iter().enumerate() {
+        let event = EventEnvelope::new(
+            EventId::from(format!("event-{index}")),
+            index as u64 + 1,
+            "2026-08-03T00:00:00Z",
+            ProjectId::from("project-1"),
+            ThreadId::from("thread-1"),
+            run_id.clone(),
+            CorrelationId::from("correlation-1"),
+            EventSource::System,
+            payload,
+        );
+        snapshot.apply(&event).expect("project event");
+    }
+
+    assert_eq!(snapshot.run_controls.len(), 1);
+    assert_eq!(snapshot.activity_items.len(), 1);
+    assert_eq!(snapshot.supervisor_decisions.len(), 1);
+    assert_eq!(snapshot.orchestration_revisions.len(), 1);
+    assert_eq!(snapshot.sequence, 5);
 }

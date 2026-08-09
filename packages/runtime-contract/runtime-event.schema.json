@@ -49,6 +49,50 @@
         }
       ]
     },
+    "agentSessionId": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentSessionId"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "parentSessionId": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentSessionId"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "parentEventId": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EventId"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "relatedToolEventId": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EventId"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "correlationId": {
       "$ref": "#/$defs/CorrelationId"
     },
@@ -112,6 +156,9 @@
     "WorkerId": {
       "type": "string"
     },
+    "AgentSessionId": {
+      "type": "string"
+    },
     "CorrelationId": {
       "type": "string"
     },
@@ -120,6 +167,11 @@
       "enum": [
         "run_created",
         "run_state_changed",
+        "run_control_recorded",
+        "agent_activity_recorded",
+        "orchestration_planning_activity_recorded",
+        "supervisor_decision_recorded",
+        "orchestration_revision_recorded",
         "plan_updated",
         "orchestration_decided",
         "orchestration_created",
@@ -131,6 +183,7 @@
         "agent_plan_updated",
         "model_routing_decided",
         "model_usage_recorded",
+        "transport_retry_scheduled",
         "tool_call_requested",
         "tool_call_completed",
         "approval_requested",
@@ -303,6 +356,126 @@
                 "from",
                 "to",
                 "reason"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "run_control_recorded"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "record": {
+                  "$ref": "#/$defs/RunControlRecord"
+                }
+              },
+              "required": [
+                "record"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "agent_activity_recorded"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "item": {
+                  "$ref": "#/$defs/AgentActivityItem"
+                }
+              },
+              "required": [
+                "item"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "orchestration_planning_activity_recorded"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "activity": {
+                  "$ref": "#/$defs/OrchestrationPlanningActivity"
+                }
+              },
+              "required": [
+                "activity"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "supervisor_decision_recorded"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "record": {
+                  "$ref": "#/$defs/SupervisorDecisionRecord"
+                }
+              },
+              "required": [
+                "record"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "orchestration_revision_recorded"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "record": {
+                  "$ref": "#/$defs/OrchestrationRevisionRecord"
+                }
+              },
+              "required": [
+                "record"
               ]
             }
           },
@@ -643,6 +816,40 @@
               },
               "required": [
                 "usage"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "transport_retry_scheduled"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "worker_id": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/WorkerId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "record": {
+                  "$ref": "#/$defs/TransportRetryRecord"
+                }
+              },
+              "required": [
+                "record"
               ]
             }
           },
@@ -1037,6 +1244,346 @@
         "cancelled"
       ]
     },
+    "RunControlRecord": {
+      "type": "object",
+      "properties": {
+        "controlId": {
+          "type": "string"
+        },
+        "control": {
+          "$ref": "#/$defs/RunControlKind"
+        },
+        "status": {
+          "$ref": "#/$defs/RunControlStatus"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "affectedWorkerIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkerId"
+          }
+        },
+        "createdAt": {
+          "description": "RFC 3339 UTC timestamp.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "controlId",
+        "control",
+        "status",
+        "summary",
+        "affectedWorkerIds",
+        "createdAt"
+      ]
+    },
+    "RunControlKind": {
+      "type": "string",
+      "enum": [
+        "guidance",
+        "pause",
+        "resume",
+        "cancel"
+      ]
+    },
+    "RunControlStatus": {
+      "type": "string",
+      "enum": [
+        "requested",
+        "queued",
+        "applied",
+        "rejected",
+        "settled"
+      ]
+    },
+    "AgentActivityItem": {
+      "type": "object",
+      "properties": {
+        "activityId": {
+          "type": "string"
+        },
+        "agentKind": {
+          "$ref": "#/$defs/AgentKind",
+          "default": "orchestration_model"
+        },
+        "agentId": {
+          "type": "string",
+          "default": ""
+        },
+        "displayName": {
+          "type": "string",
+          "default": ""
+        },
+        "workerId": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WorkerId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "phase": {
+          "type": "string"
+        },
+        "waitingForModel": {
+          "type": "boolean",
+          "default": false
+        },
+        "observation": {
+          "type": "string"
+        },
+        "decision": {
+          "type": "string"
+        },
+        "nextAction": {
+          "type": "string"
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source": {
+          "$ref": "#/$defs/ReasoningSummarySource"
+        },
+        "createdAt": {
+          "description": "RFC 3339 UTC timestamp.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "activityId",
+        "phase",
+        "observation",
+        "decision",
+        "nextAction",
+        "evidenceRefs",
+        "source",
+        "createdAt"
+      ]
+    },
+    "AgentKind": {
+      "type": "string",
+      "enum": [
+        "orchestration_model",
+        "worker",
+        "verifier",
+        "context_compressor",
+        "supervisor"
+      ]
+    },
+    "ReasoningSummarySource": {
+      "oneOf": [
+        {
+          "description": "A summary item emitted by the Provider's reasoning-summary protocol.",
+          "type": "string",
+          "const": "provider"
+        },
+        {
+          "description": "Model-authored commentary or a progress tool call. This is not hidden chain-of-thought.",
+          "type": "string",
+          "const": "model_commentary"
+        }
+      ]
+    },
+    "OrchestrationPlanningActivity": {
+      "type": "object",
+      "properties": {
+        "activityId": {
+          "type": "string"
+        },
+        "stage": {
+          "$ref": "#/$defs/OrchestrationPlanningStage"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "nextAction": {
+          "type": "string"
+        },
+        "draftVersion": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "draftWorkers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OrchestrationDraftWorker"
+          }
+        },
+        "createdAt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "activityId",
+        "stage",
+        "summary",
+        "evidence",
+        "nextAction",
+        "draftVersion",
+        "draftWorkers",
+        "createdAt"
+      ]
+    },
+    "OrchestrationPlanningStage": {
+      "type": "string",
+      "enum": [
+        "evaluating_delegation",
+        "extracting_acceptance_criteria",
+        "decomposing_work",
+        "auditing_write_scopes",
+        "scheduling_parallelism",
+        "reviewing_plan",
+        "committing_graph",
+        "replanning_guidance"
+      ]
+    },
+    "OrchestrationDraftWorker": {
+      "type": "object",
+      "properties": {
+        "draftId": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "dependencyDraftIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parallelGroup": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "writeScopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "draftId",
+        "displayName",
+        "task",
+        "dependencyDraftIds",
+        "writeScopes"
+      ]
+    },
+    "SupervisorDecisionRecord": {
+      "type": "object",
+      "properties": {
+        "decisionId": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/SupervisorDecisionKind"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "affectedWorkerIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkerId"
+          }
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "createdAt": {
+          "description": "RFC 3339 UTC timestamp.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "decisionId",
+        "kind",
+        "summary",
+        "affectedWorkerIds",
+        "evidenceRefs",
+        "createdAt"
+      ]
+    },
+    "SupervisorDecisionKind": {
+      "type": "string",
+      "enum": [
+        "continue",
+        "guide_running",
+        "revise_queued",
+        "hold_dispatch",
+        "reassign_failed",
+        "spawn_repair",
+        "request_verification",
+        "stop_for_fatal_policy"
+      ]
+    },
+    "OrchestrationRevisionRecord": {
+      "type": "object",
+      "properties": {
+        "revisionId": {
+          "type": "string"
+        },
+        "fromVersion": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "toVersion": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string"
+        },
+        "affectedWorkerIds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WorkerId"
+          }
+        },
+        "summary": {
+          "type": "string"
+        },
+        "createdAt": {
+          "description": "RFC 3339 UTC timestamp.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "revisionId",
+        "fromVersion",
+        "toVersion",
+        "reason",
+        "affectedWorkerIds",
+        "summary",
+        "createdAt"
+      ]
+    },
     "OrchestrationPlan": {
       "type": "object",
       "properties": {
@@ -1214,6 +1761,10 @@
         "workerId": {
           "$ref": "#/$defs/WorkerId"
         },
+        "displayName": {
+          "type": "string",
+          "default": ""
+        },
         "role": {
           "type": "string"
         },
@@ -1247,6 +1798,20 @@
           "items": {
             "type": "string"
           }
+        },
+        "ownedAcceptanceCriteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "parallelGroup": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "model": {
           "$ref": "#/$defs/ModelSelection"
@@ -1393,6 +1958,24 @@
         },
         "fallback": {
           "type": "boolean"
+        },
+        "reasoningEffort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "customReasoningEffort": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         }
       },
       "required": [
@@ -1400,6 +1983,19 @@
         "model",
         "reason",
         "fallback"
+      ]
+    },
+    "ReasoningEffort": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "none",
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
       ]
     },
     "WorkerBudget": {
@@ -1479,6 +2075,7 @@
     "WorkerField": {
       "type": "string",
       "enum": [
+        "display_name",
         "role",
         "tags",
         "objective",
@@ -1488,6 +2085,8 @@
         "expected_output",
         "output_schema",
         "completion_criteria",
+        "owned_acceptance_criteria",
+        "parallel_group",
         "model",
         "skills",
         "tools",
@@ -1566,20 +2165,6 @@
         "itemId",
         "source",
         "summary"
-      ]
-    },
-    "ReasoningSummarySource": {
-      "oneOf": [
-        {
-          "description": "A summary item emitted by the Provider's reasoning-summary protocol.",
-          "type": "string",
-          "const": "provider"
-        },
-        {
-          "description": "Model-authored commentary or a progress tool call. This is not hidden chain-of-thought.",
-          "type": "string",
-          "const": "model_commentary"
-        }
       ]
     },
     "AgentPlan": {
@@ -1670,6 +2255,10 @@
         "role": {
           "$ref": "#/$defs/ModelRole"
         },
+        "phase": {
+          "type": "string",
+          "default": ""
+        },
         "inputTokens": {
           "type": "integer",
           "format": "uint64",
@@ -1679,6 +2268,18 @@
           "type": "integer",
           "format": "uint64",
           "minimum": 0
+        },
+        "cachedInputTokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "latencyMs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
         },
         "totalCostMicrousd": {
           "type": [
@@ -1717,6 +2318,44 @@
         "verifier",
         "fast_cheap",
         "vision"
+      ]
+    },
+    "TransportRetryRecord": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "attempt": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "maximumRetries": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "delaySeconds": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string"
+        },
+        "createdAt": {
+          "description": "RFC 3339 UTC timestamp.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "attempt",
+        "maximumRetries",
+        "delaySeconds",
+        "reason",
+        "createdAt"
       ]
     },
     "ToolCall": {
@@ -1973,6 +2612,12 @@
         "workerId": {
           "$ref": "#/$defs/WorkerId"
         },
+        "displayName": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "role": {
           "type": [
             "string",
@@ -2040,6 +2685,21 @@
           "items": {
             "type": "string"
           }
+        },
+        "ownedAcceptanceCriteria": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "parallelGroup": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "model": {
           "anyOf": [

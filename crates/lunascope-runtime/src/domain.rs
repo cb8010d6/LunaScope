@@ -444,6 +444,41 @@ pub fn apply_domain_pack(
             }
         }
     }
+    for criterion in &plan.user_hard_constraints {
+        if plan.workers.iter().any(|worker| {
+            worker
+                .owned_acceptance_criteria
+                .iter()
+                .any(|owned| owned == criterion)
+        }) {
+            continue;
+        }
+        let owner_index = plan
+            .workers
+            .iter()
+            .position(|worker| {
+                !worker.role.eq_ignore_ascii_case("verifier")
+                    && worker
+                        .tools
+                        .iter()
+                        .any(|tool| tool == "filesystem.patch" || tool == "process.run")
+            })
+            .or_else(|| {
+                plan.workers
+                    .iter()
+                    .position(|worker| !worker.role.eq_ignore_ascii_case("verifier"))
+            });
+        if let Some(owner) = owner_index.and_then(|index| plan.workers.get_mut(index)) {
+            owner.owned_acceptance_criteria.push(criterion.clone());
+        }
+    }
+    if let Some(verifier) = plan
+        .workers
+        .iter_mut()
+        .rfind(|worker| worker.role.eq_ignore_ascii_case("verifier"))
+    {
+        verifier.owned_acceptance_criteria = plan.user_hard_constraints.clone();
+    }
     let validation = validate_orchestration(&plan);
     if validation.valid {
         Ok(plan)

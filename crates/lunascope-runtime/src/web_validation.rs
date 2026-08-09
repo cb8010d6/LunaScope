@@ -126,6 +126,7 @@ pub async fn check_browser_page(
     let profile = temporary.path().join("profile");
     let temporary_screenshot = temporary.path().join("page.png");
     let mut command = Command::new(&browser);
+    crate::hide_tokio_console_window(&mut command);
     command
         .args([
             "--headless=new",
@@ -597,7 +598,9 @@ async fn terminate_process_tree(process_id: Option<u32>) {
     };
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill.exe")
+        let mut command = Command::new("taskkill.exe");
+        crate::hide_tokio_console_window(&mut command);
+        let _ = command
             .args(["/PID", &process_id.to_string(), "/T", "/F"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())

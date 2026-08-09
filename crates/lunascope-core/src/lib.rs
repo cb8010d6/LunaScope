@@ -1,3 +1,4 @@
+mod agent_session;
 mod attachment;
 mod conversation;
 mod course;
@@ -12,6 +13,7 @@ mod policy;
 mod project;
 mod state;
 
+pub use agent_session::*;
 pub use attachment::*;
 pub use conversation::*;
 pub use course::*;
@@ -47,6 +49,11 @@ pub fn typescript_contract() -> String {
         CorrelationId::decl(&config),
         ArtifactId::decl(&config),
         CheckpointId::decl(&config),
+        AgentSessionId::decl(&config),
+        AgentSessionKind::decl(&config),
+        AgentSessionState::decl(&config),
+        AgentSessionRecord::decl(&config),
+        RunLeaseRecord::decl(&config),
         RunState::decl(&config),
         WorkerState::decl(&config),
         RiskLevel::decl(&config),
@@ -59,8 +66,11 @@ pub fn typescript_contract() -> String {
         AgentPlan::decl(&config),
         ReasoningSummarySource::decl(&config),
         ReasoningSummaryRecord::decl(&config),
+        TransportRetryRecord::decl(&config),
         ConversationRole::decl(&config),
+        ConversationThread::decl(&config),
         ConversationMessage::decl(&config),
+        RunContinuationSummary::decl(&config),
         ThreadContextSummary::decl(&config),
         ThreadContextWindow::decl(&config),
         AttachmentKind::decl(&config),
@@ -137,6 +147,17 @@ pub fn typescript_contract() -> String {
         DiffHunk::decl(&config),
         WorkspaceFileChange::decl(&config),
         OrchestrationChangeSet::decl(&config),
+        RunControlKind::decl(&config),
+        RunControlStatus::decl(&config),
+        RunControlRecord::decl(&config),
+        AgentKind::decl(&config),
+        AgentActivityItem::decl(&config),
+        OrchestrationPlanningStage::decl(&config),
+        OrchestrationDraftWorker::decl(&config),
+        OrchestrationPlanningActivity::decl(&config),
+        SupervisorDecisionKind::decl(&config),
+        SupervisorDecisionRecord::decl(&config),
+        OrchestrationRevisionRecord::decl(&config),
         EventType::decl(&config),
         EventData::decl(&config),
         EventEnvelope::decl(&config),
@@ -159,6 +180,7 @@ pub fn typescript_contract() -> String {
         ModelCapability::decl(&config),
         ModelRole::decl(&config),
         ReasoningEffort::decl(&config),
+        ReasoningEffortProfile::decl(&config),
         ModelAssignment::decl(&config),
         ModelSelectionSettings::decl(&config),
         ModelProfile::decl(&config),

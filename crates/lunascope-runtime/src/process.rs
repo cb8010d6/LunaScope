@@ -185,7 +185,9 @@ fn resolve_trusted_program(program: &str) -> Result<(String, PathBuf), ProcessEr
         let where_exe = PathBuf::from(system_root)
             .join("System32")
             .join("where.exe");
-        let output = Command::new(where_exe)
+        let mut command = Command::new(where_exe);
+        crate::hide_console_window(&mut command);
+        let output = command
             .arg(format!("$PATH:{program}"))
             .stdin(Stdio::null())
             .output()?;

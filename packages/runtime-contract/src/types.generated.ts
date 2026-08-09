@@ -21,6 +21,36 @@ export type ArtifactId = string;
 
 export type CheckpointId = string;
 
+export type AgentSessionId = string;
+
+export type AgentSessionKind = "primary" | "orchestrator" | "worker" | "verifier" | "supervisor" | "context_compressor";
+
+export type AgentSessionState = "queued" | "running" | "waiting_for_model" | "waiting_for_tool" | "paused" | "completed" | "failed" | "cancelled" | "interrupted";
+
+export type AgentSessionRecord = { sessionId: AgentSessionId, parentSessionId: AgentSessionId | null, projectId: ProjectId, threadId: ThreadId, runId: RunId, workerId: WorkerId | null, kind: AgentSessionKind, displayName: string, state: AgentSessionState,
+/**
+ * RFC 3339 UTC timestamp.
+ */
+createdAt: string,
+/**
+ * RFC 3339 UTC timestamp.
+ */
+updatedAt: string, };
+
+export type RunLeaseRecord = { runId: RunId, ownerId: string, phase: string,
+/**
+ * RFC 3339 UTC timestamp.
+ */
+heartbeatAt: string,
+/**
+ * RFC 3339 UTC timestamp.
+ */
+expiresAt: string,
+/**
+ * RFC 3339 UTC timestamp of the most recent observable progress.
+ */
+lastProgressAt: string, };
+
 export type RunState = "created" | "planning" | "awaiting_user" | "running" | "pausing" | "paused" | "waiting_approval" | "compacting" | "verifying" | "synthesizing" | "completed" | "partially_completed" | "failed" | "cancelled";
 
 export type WorkerState = "draft" | "ready" | "queued" | "running_model" | "waiting_tool_approval" | "running_tool" | "waiting_dependency" | "waiting_handoff" | "paused" | "compacting" | "verifying" | "completed" | "failed" | "cancelled";
@@ -45,9 +75,19 @@ export type ReasoningSummarySource = "provider" | "model_commentary";
 
 export type ReasoningSummaryRecord = { itemId: string, source: ReasoningSummarySource, summary: Array<string>, };
 
+export type TransportRetryRecord = { requestId: string, attempt: number, maximumRetries: number, delaySeconds: number, reason: string,
+/**
+ * RFC 3339 UTC timestamp.
+ */
+createdAt: string, };
+
 export type ConversationRole = "user" | "assistant" | "system";
 
+export type ConversationThread = { threadId: ThreadId, projectId: ProjectId, title: string, activeRunId: RunId | null, contextRevision: number, createdAt: string, updatedAt: string, };
+
 export type ConversationMessage = { messageId: string, projectId: ProjectId, threadId: ThreadId, runId: RunId | null, sequence: number, role: ConversationRole, content: string, contextContent: string | null, createdAt: string, };
+
+export type RunContinuationSummary = { threadId: ThreadId, runId: RunId, revision: number, goals: Array<string>, constraints: Array<string>, completedChanges: Array<string>, workspaceState: Array<string>, evidence: Array<string>, unresolvedItems: Array<string>, nextActions: Array<string>, createdAt: string, };
 
 export type ThreadContextSummary = { threadId: ThreadId, revision: number, coveredThroughSequence: number, sourceTokens: number, summaryTokens: number, summary: string, updatedAt: string, };
 
@@ -121,7 +161,7 @@ export type DomainFlowEvidence = { "pack": "programming", "evidence": Programmin
 
 export type PermissionDecision = "allow_once" | "allow_for_run" | "allow_for_scope" | "reject";
 
-export type ModelSelection = { provider: string, model: string, reason: string, fallback: boolean, };
+export type ModelSelection = { provider: string, model: string, reason: string, fallback: boolean, reasoningEffort: ReasoningEffort | null, customReasoningEffort: string | null, };
 
 export type DelegationKind = "single_agent" | "multi_agent";
 
@@ -139,13 +179,13 @@ export type RetryPolicy = { maximumAttempts: number, backoffMs: number, retryabl
 
 export type WorkerCheckpointPolicy = { onStart: boolean, onArtifact: boolean, onCompletion: boolean, };
 
-export type WorkerField = "role" | "tags" | "objective" | "task" | "prompt" | "input_context" | "expected_output" | "output_schema" | "completion_criteria" | "model" | "skills" | "tools" | "permissions" | "budget" | "dependencies" | "timeout" | "retry_policy" | "checkpoint_policy" | "write_scopes" | "parent_worker";
+export type WorkerField = "display_name" | "role" | "tags" | "objective" | "task" | "prompt" | "input_context" | "expected_output" | "output_schema" | "completion_criteria" | "owned_acceptance_criteria" | "parallel_group" | "model" | "skills" | "tools" | "permissions" | "budget" | "dependencies" | "timeout" | "retry_policy" | "checkpoint_policy" | "write_scopes" | "parent_worker";
 
-export type WorkerSpec = { workerId: WorkerId, role: string, tags: Array<string>, objective: string, task: string, prompt: string, inputContext: WorkerInputContext, expectedOutput: string, outputSchema: WorkerOutputSchema, completionCriteria: Array<string>, model: ModelSelection, skills: Array<string>, tools: Array<string>, permissions: Array<string>, budget: WorkerBudget, dependencies: Array<WorkerId>, timeoutMs: number, retryPolicy: RetryPolicy, checkpointPolicy: WorkerCheckpointPolicy, writeScopes: Array<string>, lockedFields: Array<WorkerField>, parentWorkerId: WorkerId | null, depth: number, };
+export type WorkerSpec = { workerId: WorkerId, displayName: string, role: string, tags: Array<string>, objective: string, task: string, prompt: string, inputContext: WorkerInputContext, expectedOutput: string, outputSchema: WorkerOutputSchema, completionCriteria: Array<string>, ownedAcceptanceCriteria: Array<string>, parallelGroup: string | null, model: ModelSelection, skills: Array<string>, tools: Array<string>, permissions: Array<string>, budget: WorkerBudget, dependencies: Array<WorkerId>, timeoutMs: number, retryPolicy: RetryPolicy, checkpointPolicy: WorkerCheckpointPolicy, writeScopes: Array<string>, lockedFields: Array<WorkerField>, parentWorkerId: WorkerId | null, depth: number, };
 
 export type OrchestrationPatchApplyMode = "apply_now" | "apply_after_current_step" | "apply_on_retry" | "clone_revision" | "cancel";
 
-export type WorkerPatch = { workerId: WorkerId, role: string | null, tags: Array<string> | null, objective: string | null, task: string | null, prompt: string | null, inputContext: WorkerInputContext | null, expectedOutput: string | null, outputSchema: WorkerOutputSchema | null, completionCriteria: Array<string> | null, model: ModelSelection | null, skills: Array<string> | null, tools: Array<string> | null, permissions: Array<string> | null, budget: WorkerBudget | null, dependencies: Array<WorkerId> | null, timeoutMs: number | null, retryPolicy: RetryPolicy | null, checkpointPolicy: WorkerCheckpointPolicy | null, writeScopes: Array<string> | null, parentWorkerId: WorkerId | null | null, lockFields: Array<WorkerField>, unlockFields: Array<WorkerField>, };
+export type WorkerPatch = { workerId: WorkerId, displayName: string | null, role: string | null, tags: Array<string> | null, objective: string | null, task: string | null, prompt: string | null, inputContext: WorkerInputContext | null, expectedOutput: string | null, outputSchema: WorkerOutputSchema | null, completionCriteria: Array<string> | null, ownedAcceptanceCriteria: Array<string> | null, parallelGroup: string | null | null, model: ModelSelection | null, skills: Array<string> | null, tools: Array<string> | null, permissions: Array<string> | null, budget: WorkerBudget | null, dependencies: Array<WorkerId> | null, timeoutMs: number | null, retryPolicy: RetryPolicy | null, checkpointPolicy: WorkerCheckpointPolicy | null, writeScopes: Array<string> | null, parentWorkerId: WorkerId | null | null, lockFields: Array<WorkerField>, unlockFields: Array<WorkerField>, };
 
 export type OrchestrationPatchOperation = { "kind": "add_worker", "data": { spec: WorkerSpec, } } | { "kind": "update_worker", "data": { patch: WorkerPatch, } } | { "kind": "remove_worker", "data": { worker_id: WorkerId, } };
 
@@ -215,17 +255,55 @@ export type WorkspaceFileChange = { path: string, kind: FileChangeKind, addition
 
 export type OrchestrationChangeSet = { runId: RunId, files: Array<WorkspaceFileChange>, additions: number, deletions: number, truncated: boolean, };
 
-export type EventType = "run_created" | "run_state_changed" | "plan_updated" | "orchestration_decided" | "orchestration_created" | "worker_created" | "worker_removed" | "worker_state_changed" | "model_stream_chunk" | "reasoning_summary_recorded" | "agent_plan_updated" | "model_routing_decided" | "model_usage_recorded" | "tool_call_requested" | "tool_call_completed" | "approval_requested" | "approval_resolved" | "handoff_recorded" | "orchestration_patched" | "artifact_recorded" | "checkpoint_created" | "context_compacted" | "verification_recorded" | "run_completed" | "run_failed";
+export type RunControlKind = "guidance" | "pause" | "resume" | "cancel";
 
-export type EventData = { "kind": "run_created", "data": { title: string, initial_prompt: string, } } | { "kind": "run_state_changed", "data": { from: RunState, to: RunState, reason: string, } } | { "kind": "plan_updated", "data": { version: number, markdown: string, } } | { "kind": "orchestration_decided", "data": { decision: string, rationale: string, estimated_cost: string | null, } } | { "kind": "orchestration_created", "data": { plan: OrchestrationPlan, } } | { "kind": "worker_created", "data": { spec: WorkerSpec, } } | { "kind": "worker_removed", "data": { worker_id: WorkerId, from: WorkerState, reason: string, } } | { "kind": "worker_state_changed", "data": { worker_id: WorkerId, from: WorkerState, to: WorkerState, reason: string, } } | { "kind": "model_stream_chunk", "data": { worker_id: WorkerId | null, stream_id: string, index: number, text: string, } } | { "kind": "reasoning_summary_recorded", "data": { worker_id: WorkerId | null, record: ReasoningSummaryRecord, } } | { "kind": "agent_plan_updated", "data": { worker_id: WorkerId | null, plan: AgentPlan, } } | { "kind": "model_routing_decided", "data": { decision: ModelRoutingDecision, } } | { "kind": "model_usage_recorded", "data": { usage: ModelUsageRecord, } } | { "kind": "tool_call_requested", "data": { worker_id: WorkerId | null, call: ToolCall, } } | { "kind": "tool_call_completed", "data": { worker_id: WorkerId | null, result: ToolResult, } } | { "kind": "approval_requested", "data": { worker_id: WorkerId | null, request: ApprovalRequest, } } | { "kind": "approval_resolved", "data": { resolution: ApprovalResolution, } } | { "kind": "handoff_recorded", "data": { from: string, to: string, artifact_ids: Array<ArtifactId>, summary: string, } } | { "kind": "orchestration_patched", "data": { patch: OrchestrationPatch, plan: OrchestrationPlan, } } | { "kind": "artifact_recorded", "data": { artifact: ArtifactRecord, } } | { "kind": "checkpoint_created", "data": { checkpoint: CheckpointRecord, } } | { "kind": "context_compacted", "data": { previous_tokens: number, resulting_tokens: number, summary_artifact_id: ArtifactId, } } | { "kind": "verification_recorded", "data": { verification: VerificationRecord, } } | { "kind": "run_completed", "data": { completion: CompletionKind, verification: VerificationStatus, summary: string, } } | { "kind": "run_failed", "data": { code: string, message: string, recoverable: boolean, } };
+export type RunControlStatus = "requested" | "queued" | "applied" | "rejected" | "settled";
+
+export type RunControlRecord = { controlId: string, control: RunControlKind, status: RunControlStatus, summary: string, affectedWorkerIds: Array<WorkerId>,
+/**
+ * RFC 3339 UTC timestamp.
+ */
+createdAt: string, };
+
+export type AgentKind = "orchestration_model" | "worker" | "verifier" | "context_compressor" | "supervisor";
+
+export type AgentActivityItem = { activityId: string, agentKind: AgentKind, agentId: string, displayName: string, workerId: WorkerId | null, phase: string, waitingForModel: boolean, observation: string, decision: string, nextAction: string, evidenceRefs: Array<string>, source: ReasoningSummarySource,
+/**
+ * RFC 3339 UTC timestamp.
+ */
+createdAt: string, };
+
+export type OrchestrationPlanningStage = "evaluating_delegation" | "extracting_acceptance_criteria" | "decomposing_work" | "auditing_write_scopes" | "scheduling_parallelism" | "reviewing_plan" | "committing_graph" | "replanning_guidance";
+
+export type OrchestrationDraftWorker = { draftId: string, displayName: string, task: string, dependencyDraftIds: Array<string>, parallelGroup: string | null, writeScopes: Array<string>, };
+
+export type OrchestrationPlanningActivity = { activityId: string, stage: OrchestrationPlanningStage, summary: string, evidence: Array<string>, nextAction: string, draftVersion: number, draftWorkers: Array<OrchestrationDraftWorker>, createdAt: string, };
+
+export type SupervisorDecisionKind = "continue" | "guide_running" | "revise_queued" | "hold_dispatch" | "reassign_failed" | "spawn_repair" | "request_verification" | "stop_for_fatal_policy";
+
+export type SupervisorDecisionRecord = { decisionId: string, kind: SupervisorDecisionKind, summary: string, affectedWorkerIds: Array<WorkerId>, evidenceRefs: Array<string>,
+/**
+ * RFC 3339 UTC timestamp.
+ */
+createdAt: string, };
+
+export type OrchestrationRevisionRecord = { revisionId: string, fromVersion: number, toVersion: number, reason: string, affectedWorkerIds: Array<WorkerId>, summary: string,
+/**
+ * RFC 3339 UTC timestamp.
+ */
+createdAt: string, };
+
+export type EventType = "run_created" | "run_state_changed" | "run_control_recorded" | "agent_activity_recorded" | "orchestration_planning_activity_recorded" | "supervisor_decision_recorded" | "orchestration_revision_recorded" | "plan_updated" | "orchestration_decided" | "orchestration_created" | "worker_created" | "worker_removed" | "worker_state_changed" | "model_stream_chunk" | "reasoning_summary_recorded" | "agent_plan_updated" | "model_routing_decided" | "model_usage_recorded" | "transport_retry_scheduled" | "tool_call_requested" | "tool_call_completed" | "approval_requested" | "approval_resolved" | "handoff_recorded" | "orchestration_patched" | "artifact_recorded" | "checkpoint_created" | "context_compacted" | "verification_recorded" | "run_completed" | "run_failed";
+
+export type EventData = { "kind": "run_created", "data": { title: string, initial_prompt: string, } } | { "kind": "run_state_changed", "data": { from: RunState, to: RunState, reason: string, } } | { "kind": "run_control_recorded", "data": { record: RunControlRecord, } } | { "kind": "agent_activity_recorded", "data": { item: AgentActivityItem, } } | { "kind": "orchestration_planning_activity_recorded", "data": { activity: OrchestrationPlanningActivity, } } | { "kind": "supervisor_decision_recorded", "data": { record: SupervisorDecisionRecord, } } | { "kind": "orchestration_revision_recorded", "data": { record: OrchestrationRevisionRecord, } } | { "kind": "plan_updated", "data": { version: number, markdown: string, } } | { "kind": "orchestration_decided", "data": { decision: string, rationale: string, estimated_cost: string | null, } } | { "kind": "orchestration_created", "data": { plan: OrchestrationPlan, } } | { "kind": "worker_created", "data": { spec: WorkerSpec, } } | { "kind": "worker_removed", "data": { worker_id: WorkerId, from: WorkerState, reason: string, } } | { "kind": "worker_state_changed", "data": { worker_id: WorkerId, from: WorkerState, to: WorkerState, reason: string, } } | { "kind": "model_stream_chunk", "data": { worker_id: WorkerId | null, stream_id: string, index: number, text: string, } } | { "kind": "reasoning_summary_recorded", "data": { worker_id: WorkerId | null, record: ReasoningSummaryRecord, } } | { "kind": "agent_plan_updated", "data": { worker_id: WorkerId | null, plan: AgentPlan, } } | { "kind": "model_routing_decided", "data": { decision: ModelRoutingDecision, } } | { "kind": "model_usage_recorded", "data": { usage: ModelUsageRecord, } } | { "kind": "transport_retry_scheduled", "data": { worker_id: WorkerId | null, record: TransportRetryRecord, } } | { "kind": "tool_call_requested", "data": { worker_id: WorkerId | null, call: ToolCall, } } | { "kind": "tool_call_completed", "data": { worker_id: WorkerId | null, result: ToolResult, } } | { "kind": "approval_requested", "data": { worker_id: WorkerId | null, request: ApprovalRequest, } } | { "kind": "approval_resolved", "data": { resolution: ApprovalResolution, } } | { "kind": "handoff_recorded", "data": { from: string, to: string, artifact_ids: Array<ArtifactId>, summary: string, } } | { "kind": "orchestration_patched", "data": { patch: OrchestrationPatch, plan: OrchestrationPlan, } } | { "kind": "artifact_recorded", "data": { artifact: ArtifactRecord, } } | { "kind": "checkpoint_created", "data": { checkpoint: CheckpointRecord, } } | { "kind": "context_compacted", "data": { previous_tokens: number, resulting_tokens: number, summary_artifact_id: ArtifactId, } } | { "kind": "verification_recorded", "data": { verification: VerificationRecord, } } | { "kind": "run_completed", "data": { completion: CompletionKind, verification: VerificationStatus, summary: string, } } | { "kind": "run_failed", "data": { code: string, message: string, recoverable: boolean, } };
 
 export type EventEnvelope = { eventId: EventId, sequence: number, schemaVersion: number,
 /**
  * RFC 3339 UTC timestamp.
  */
-timestamp: string, projectId: ProjectId, threadId: ThreadId, runId: RunId, orchestrationId: OrchestrationId | null, workerId: WorkerId | null, correlationId: CorrelationId, causationId: EventId | null, eventType: EventType, source: EventSource, payload: EventData, risk: RiskLevel, redactionState: RedactionState, };
+timestamp: string, projectId: ProjectId, threadId: ThreadId, runId: RunId, orchestrationId: OrchestrationId | null, workerId: WorkerId | null, agentSessionId: AgentSessionId | null, parentSessionId: AgentSessionId | null, parentEventId: EventId | null, relatedToolEventId: EventId | null, correlationId: CorrelationId, causationId: EventId | null, eventType: EventType, source: EventSource, payload: EventData, risk: RiskLevel, redactionState: RedactionState, };
 
-export type RuntimeSnapshot = { schemaVersion: number, sequence: number, runId: RunId, runState: RunState, planMarkdown: string, orchestrationPlan: OrchestrationPlan | null, workers: { [key in string]: WorkerState }, agentPlans: { [key in string]: AgentPlan }, reasoningSummaries: { [key in string]: Array<ReasoningSummaryRecord> }, pendingApprovals: Array<ApprovalRequest>, artifactIds: Array<ArtifactId>, verification: VerificationStatus, };
+export type RuntimeSnapshot = { schemaVersion: number, sequence: number, runId: RunId, runState: RunState, planMarkdown: string, orchestrationPlan: OrchestrationPlan | null, workers: { [key in string]: WorkerState }, agentPlans: { [key in string]: AgentPlan }, reasoningSummaries: { [key in string]: Array<ReasoningSummaryRecord> }, activityItems: Array<AgentActivityItem>, orchestrationPlanningActivities: Array<OrchestrationPlanningActivity>, runControls: Array<RunControlRecord>, supervisorDecisions: Array<SupervisorDecisionRecord>, orchestrationRevisions: Array<OrchestrationRevisionRecord>, pendingApprovals: Array<ApprovalRequest>, artifactIds: Array<ArtifactId>, verification: VerificationStatus, };
 
 export type RuntimeDelta = { fromSequence: number, toSequence: number, events: Array<EventEnvelope>, };
 
@@ -261,11 +339,24 @@ export type ModelCapability = "text" | "vision" | "tools" | "structured_output" 
 
 export type ModelRole = "orchestration" | "general_worker" | "programming" | "research" | "writing" | "frontend" | "game_development" | "reviewer" | "verifier" | "fast_cheap" | "vision";
 
-export type ReasoningEffort = "low" | "medium" | "high";
+export type ReasoningEffort = "auto" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-export type ModelAssignment = { role: ModelRole, providerConfigId: string, modelId: string, reasoningEffort: ReasoningEffort, maximumContextTokens: number | null, maximumBudgetMicrousd: number | null, fallbackProviderConfigId: string | null, fallbackModelId: string | null, locked: boolean, };
+export type ReasoningEffortProfile = { supported: Array<ReasoningEffort>, defaultEffort: ReasoningEffort, thinkingSupported: boolean, note: string, };
 
-export type ModelSelectionSettings = { orchestration: ModelAssignment, workerPool: Array<ModelAssignment>, };
+export type ModelAssignment = { role: ModelRole, providerConfigId: string, modelId: string,
+/**
+ * Provider-native reasoning effort. `None` means the Provider default.
+ * This is intentionally free-form because compatible endpoints frequently
+ * add effort levels before LunaScope can update a built-in model catalog.
+ */
+customReasoningEffort: string | null, reasoningEffort: ReasoningEffort, maximumContextTokens: number | null, maximumBudgetMicrousd: number | null, fallbackProviderConfigId: string | null, fallbackModelId: string | null, locked: boolean, };
+
+export type ModelSelectionSettings = { orchestration: ModelAssignment, vision: ModelAssignment | null, workerPool: Array<ModelAssignment>,
+/**
+ * Legacy provider/model effort overrides retained only for migration from
+ * LunaScope 0.1.0. New settings store the value on each assignment.
+ */
+customReasoningEfforts: { [key in string]: string }, };
 
 export type ModelProfile = { providerConfigId: string, providerType: ProviderType, modelId: string, displayName: string, capabilities: Array<ModelCapability>, roles: Array<ModelRole>, available: boolean, local: boolean, qualityScore: number, speedScore: number, privacyScore: number, inputCostMicrousdPerMillionTokens: number, outputCostMicrousdPerMillionTokens: number, };
 
@@ -299,7 +390,7 @@ export type ModelRoutingRequest = { role: ModelRole, requiredCapabilities: Array
 
 export type ModelRoutingDecision = { providerConfigId: string, modelId: string, reason: string, fallback: boolean, estimatedCostMicrousd: number, requiresCostApproval: boolean, };
 
-export type ModelUsageRecord = { providerConfigId: string, modelId: string, role: ModelRole, inputTokens: number, outputTokens: number, totalCostMicrousd: number | null, fallbackFrom: string | null, };
+export type ModelUsageRecord = { providerConfigId: string, modelId: string, role: ModelRole, phase: string, inputTokens: number, outputTokens: number, cachedInputTokens: number, latencyMs: number, totalCostMicrousd: number | null, fallbackFrom: string | null, };
 
 export type SkillSourceKind = "agents" | "codex" | "claude" | "open_code" | "luna_scope_global" | "luna_scope_project" | "luna_scope_system" | "luna_scope_user";
 

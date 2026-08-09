@@ -46,6 +46,7 @@ impl<'a> NativeMcpClient<'a> {
                     environment,
                 } => {
                     let mut command = tokio::process::Command::new(program);
+                    crate::hide_tokio_console_window(&mut command);
                     command.args(args);
                     command.kill_on_drop(true);
                     if let Some(cwd) = cwd {
@@ -111,6 +112,7 @@ impl<'a> NativeMcpClient<'a> {
                     environment,
                 } => {
                     let mut command = tokio::process::Command::new(program);
+                    crate::hide_tokio_console_window(&mut command);
                     command.args(args);
                     command.kill_on_drop(true);
                     if let Some(cwd) = cwd {

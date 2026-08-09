@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 
+import { requestConfirmation } from "../ui/custom-controls";
 import type { CompanionRenderer } from "./renderer";
 import type { CompanionSettings } from "./types";
 
@@ -818,7 +819,16 @@ export async function handleCompanionLibraryAction(action: string, tr: Translate
   if (action === "companion-activate-model" || action === "companion-remove-model") {
     const id = button?.dataset.modelId;
     if (!id) return true;
-    if (action === "companion-remove-model" && !window.confirm(tr("确认移除这个本地模型？", "Remove this local model?"))) return true;
+    if (
+      action === "companion-remove-model" &&
+      !(await requestConfirmation({
+        title: tr("移除本地模型", "Remove local model"),
+        message: tr("确认移除这个本地模型？", "Remove this local model?"),
+        confirmLabel: tr("移除", "Remove"),
+        cancelLabel: tr("取消", "Cancel"),
+        danger: true,
+      }))
+    ) return true;
     try {
       if (action === "companion-activate-model") await invoke("companion_activate_installed_model", { modelId: id });
       else await invoke("companion_remove_installed_model", { modelId: id });

@@ -4,6 +4,38 @@ use ts_rs::TS;
 
 use crate::{ProjectId, RunId, ThreadId};
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct ConversationThread {
+    pub thread_id: ThreadId,
+    pub project_id: ProjectId,
+    pub title: String,
+    pub active_run_id: Option<RunId>,
+    #[ts(type = "number")]
+    pub context_revision: u64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct RunContinuationSummary {
+    pub thread_id: ThreadId,
+    pub run_id: RunId,
+    #[ts(type = "number")]
+    pub revision: u64,
+    pub goals: Vec<String>,
+    pub constraints: Vec<String>,
+    pub completed_changes: Vec<String>,
+    pub workspace_state: Vec<String>,
+    pub evidence: Vec<String>,
+    pub unresolved_items: Vec<String>,
+    pub next_actions: Vec<String>,
+    pub created_at: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(rename_all = "snake_case")]

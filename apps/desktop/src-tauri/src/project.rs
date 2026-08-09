@@ -150,7 +150,7 @@ pub(crate) async fn save_project(
                 Some(config)
             } else {
                 let providers = state.store.provider_configs().map_err(display_error)?;
-                let (provider, _) =
+                let (provider, _, _, _) =
                     crate::orchestration::selected_orchestration_model(&state, &providers)?;
                 enforce_permissions(
                     &[

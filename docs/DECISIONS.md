@@ -415,3 +415,171 @@ Decisions are append-only. Superseded decisions remain visible and point to thei
 - Date: 2026-08-01
 - Decision: Implementation, repair, and independent verification use different bounded execution budgets. A writable implementation phase may preserve its patch and latest browser evidence for a directly dependent repair Worker without claiming completion. Retries receive the exact prior terminal failure and resume from checkpointed files. The final Verifier must return exactly one Rust-canonical `CriterionVerification` row for every stable `AC-N`; missing, duplicate, failed, unverified, or evidence-free passed rows become fatal findings in the scheduler and enter the bounded autonomous repair path.
 - Consequence: One exhausted model context no longer discards a usable implementation or forces a whole-graph restart. Global prose such as "all requirements passed" cannot satisfy the release gate, while already-passed criteria remain outside the targeted repair scope. Behavioral evidence takes precedence over lexical keyword checks.
+
+## D-0060 - Vision fallback is a native fail-closed perception stage
+
+- Status: Accepted
+- Date: 2026-08-02
+- Decision: Model selection has an optional independent `Vision` assignment. When the assigned Orchestration or Worker model is text-only, LunaScope sends bounded visual assets only to that vision-capable Provider, converts the response into question-focused inert text, and gives only that text to the main model. Descriptions are cached by Provider, model, media type, bytes, and focus prompt with at most four concurrent requests. The design is based on the pinned MIT-licensed `Anionex/codex-vision-proxy` reference, but is implemented natively in Rust without a Python sidecar.
+- Consequence: DeepSeek, GLM, and other text-only models can use screenshots and uploaded images without receiving unsupported multimodal payloads. A vision failure stops that visual step; raw content never silently falls through to the text model, and instructions visible inside an image remain untrusted data.
+
+## D-0061 - Reasoning effort and private reasoning remain Provider-native
+
+- Status: Accepted
+- Date: 2026-08-02
+- Decision: LunaScope exposes `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` in the Rust contract, then narrows the UI to a model-aware supported profile. OpenAI Responses uses `reasoning.effort`, OpenAI-compatible Chat uses `reasoning_effort` plus documented DeepSeek/GLM thinking toggles, and Anthropic Messages uses `output_config.effort`. DeepSeek `reasoning_content` is retained only long enough to preserve the next assistant-tool/result protocol turn; it is not persisted or projected as a user-visible reasoning summary.
+- Consequence: Extended effort levels no longer depend on a lowest-common-denominator dropdown, while unsupported known aliases are hidden. Provider-authored summaries remain visible; private chain content remains private and still satisfies DeepSeek's multi-turn tool protocol.
+
+## D-0062 - Active graphs receive bounded dynamic supervision
+
+- Status: Accepted
+- Date: 2026-08-02
+- Decision: The configured Orchestration model reviews bounded tool-result checkpoints during execution, immediately after a failed operation and periodically during long successful runs. It compares observable evidence with the persisted acceptance contract and current Worker states, then chooses `continue`, targeted `guide`, or safe-boundary `replan` guidance for existing unfinished Workers. A run permits at most 24 monitor reviews and at most six per Worker; completed, failed, and cancelled Workers cannot be reopened by the monitor.
+- Consequence: Worker prompts and approaches can adapt to drift, repeated failure, weak evidence, or task-wide gaps without replaying successful calls or replacing the active graph. The monitor cannot expand permissions, alter completed work, or expose hidden chain-of-thought.
+
+## D-0063 - Planning is part of the same durable controllable Run
+
+- Status: Accepted
+- Date: 2026-08-03
+- Decision: Persist and register the Run before the first planning Provider call. One cancellation token, pause gate, guidance queue, and phase projection span Planning, dispatch, execution, verification, repair, and settlement. A repeated Send in any active phase is durable guidance for that Run.
+- Consequence: The desktop can show Guide, Pause, and Cancel immediately after message persistence; planning cannot become an unobservable duplicate invocation. User cancellation terminates planning, model calls, tools, retries, and repair chains as `Cancelled`, never as execution failure and never as verifier input.
+
+## D-0064 - Public activity and graph revisions are durable coordination records
+
+- Status: Accepted
+- Date: 2026-08-03
+- Decision: Persist model/provider reasoning summaries, explicit `observation -> decision -> next action` commentary, tool lifecycle evidence, run-control acknowledgements, supervisor decisions, and graph revisions as distinct records. Dynamic supervision consumes run events asynchronously and may guide active Workers or patch queued Workers only at safe boundaries. The frontend applies sequence-ordered incremental node updates and rejects stale state regressions.
+- Consequence: Users can inspect meaningful work and supervision without exposing hidden chain-of-thought. Monitoring no longer adds a synchronous Provider delay to a Worker tool step, and the V14 graph does not flicker or reset running nodes when a stale snapshot arrives.
+
+## D-0065 - Reasoning effort is a model-family capability with an explicit escape hatch
+
+- Status: Accepted
+- Date: 2026-08-03
+- Decision: `Auto` omits an explicit effort parameter and is distinct from disabling thinking. Built-in profiles cover OpenAI, Anthropic, DeepSeek, Kimi/Moonshot, GLM, Grok/xAI, and Qwen/Alibaba model families using Provider-native request fields. A model not recognized by the capability table remains on `Auto` unless the user supplies a bounded custom ASCII effort value; known models reject unsupported values. Every assignment exposes a Test action that validates the current profile and performs a real bounded Provider call through the configured keyring credential.
+- Consequence: LunaScope does not advertise invalid effort choices, yet newly released compatible models remain usable before the embedded catalog is updated. Saving and sending share the same backend validation, old invalid settings migrate to `Auto`, and a green test result proves the selected model and exact effort were accepted by the remote Provider.
+
+## D-0066 - Reasoning effort is a tested Provider-native value
+
+- Status: Accepted; supersedes the selection behavior in D-0065
+- Date: 2026-08-04
+- Decision: The settings UI exposes one bounded free-form reasoning-effort field per Orchestration, Vision, and Worker assignment. Blank means the Provider default and sends no explicit effort; any nonblank value is passed using the Provider protocol's native field. The legacy enum remains only for wire compatibility and migration, while new assignments persist their value directly and keep that enum on `Auto`. Every distinct Provider configuration, model, and effort tuple must complete a real bounded Provider request in the current desktop session before the backend accepts a settings save. Changing Provider metadata or credentials invalidates all test attestations.
+- Consequence: A stale embedded model catalog can no longer collapse the control to `Auto` or falsely reject a newly released Kimi, GLM, OpenAI, Anthropic, DeepSeek, Grok, Qwen, or compatible model. Invalid values fail at the actual Provider before they can become saved configuration, and the save rule cannot be bypassed through the WebView.
+
+## D-0067 - Registered desktop commands must have a matching main-window ACL entry
+
+- Status: Accepted
+- Date: 2026-08-04
+- Decision: Every application command in the Tauri build manifest must also appear in the composed main-window permission set. A Rust test derives each `allow-*` identifier from the registered command list and fails the build when any entry is missing. Model compatibility tests report progress and results beside the exact assignment instead of relying on a distant page-level status element.
+- Consequence: A command cannot ship in the frontend and Rust invoke handler while remaining unreachable from the WebView. ACL faults are identified as LunaScope application-permission errors, and long settings pages provide immediate visible feedback for the control the user actually clicked.
+
+## D-0068 - Worker identity is task-derived and live topology is replaceable only before side effects
+
+- Status: Accepted
+- Date: 2026-08-07
+- Decision: Each model-authored Worker carries a task-derived display name, owned acceptance criteria, explicit write scopes, an expected deliverable, and a dependency-derived parallel wave. Ordinary assignments are limited to one independently reviewable module, function cluster, test cluster, asset group, migration, or defect. The scheduler continuously refills available slots and accepts graph revisions only for Workers that have not started; running and completed side effects remain immutable. A guidance replan may replace queued topology, while active Workers receive guidance only at their next safe model boundary.
+- Consequence: The graph represents concrete employee-sized work instead of role labels. Independent non-conflicting nodes run concurrently, conflicting writers are serialized, and user guidance changes the real unfinished graph without replaying completed work.
+
+## D-0069 - Observable planning must also have a convergence budget
+
+- Status: Accepted
+- Date: 2026-08-07
+- Decision: Planning publishes model lifecycle, Provider reasoning summaries, explicit progress commentary, and draft graph revisions, but it may perform at most five Provider steps and three planning-tool rounds. After the third tool round the Provider receives no further planning tools and must submit the final graph. Complex planning calls use cancellable 150-second tool-round and 180-second final-response limits. Acceptance ownership is checked only after the normalized global contract is attached, then remains strict.
+- Consequence: Users can see a real graph being constructed without allowing an otherwise valid long task to spend unbounded time in planning. Provider latency remains visible and cancellable; malformed ownership cannot fail during the temporary conversion state or bypass validation after contract attachment.
+
+## D-0070 - Conversation continuity is a native durable projection
+
+- Status: Accepted
+- Date: 2026-08-07
+- Decision: Persist `ConversationThread` identity and `RunContinuationSummary` records in SQLite. A continuation records long-term goals, constraints, completed changes, workspace state, evidence, unresolved items, and next actions. The frontend hydrates native threads and runtime projections from the backend; `localStorage` remains an interface cache rather than the source of conversational truth.
+- Consequence: Same-thread follow-up work survives task settlement, context compaction, and application restart. Planner, Worker, verifier, and guidance replan can receive the same durable context version instead of reconstructing history from transient UI state.
+
+## D-0071 - Contour art is procedural and motion is non-linear
+
+- Status: Accepted
+- Date: 2026-08-07
+- Decision: LunaScope does not ship or request a generated contour image. The WebView derives a stable per-thread seed, builds a five-octave fractal height field locally, and extracts eight SVG isolines with Marching Squares. Contours appear only behind orchestration, waiting, and empty surfaces. Page transitions, new activity, panels, dialogs, lunar phases, streaming indicators, and active graph nodes share explicit non-linear easing tokens; reduced-motion preference collapses these transitions without removing state information.
+- Consequence: The visual texture remains offline, naturally varied, reproducible inside a thread, and independent of bundled image assets. Motion communicates navigation or runtime state without adding linear mechanical movement or obscuring readable content.
+
+## D-0072 - Delegation decisions are a visible planning stage
+
+- Status: Accepted
+- Date: 2026-08-07
+- Decision: Treat the Orchestration model's single-Agent versus multi-Agent decision as a first-class persisted planning stage. Prefer Provider-native reasoning summaries and model-authored `observation -> decision -> next action` commentary. When a model submits its final structured graph without calling the progress tools, derive the public stage only from that same response's rationale, acceptance criteria, Worker topology, dependencies, and write scopes; never manufacture or expose hidden chain-of-thought. Planning, guiding, pausing, and cancelling lock the composer, while stable execution alone accepts guidance.
+- Consequence: Every accepted graph has visible evidence, a delegation judgment, and a concrete next action without forcing extra Provider rounds that can degrade planning quality. The global moon remains mounted across routes until the active model lifecycle settles, and the user cannot accidentally start or guide through a critical graph mutation.
+
+## D-0073 - Route motion uses one sequential content stage
+
+- Status: Accepted
+- Date: 2026-08-07
+- Decision: Do not use browser snapshot cross-fades for workspace navigation. Keep one persistent `#view` stage, complete a short nonlinear exit animation, replace its contents only at the invisible boundary, then run the nonlinear entrance animation. Coalesce rapid requests to the latest destination, suppress nested content-entry effects during the route transaction, lock route controls for the bounded transition, and bypass movement under reduced-motion preference.
+- Consequence: Old and new pages can no longer be visible at the same time. Navigation avoids expensive blur and clip-path compositing, does not queue obsolete intermediate destinations, and preserves a single accessibility-busy surface throughout the state change.
+
+## D-0074 - Planning visibility is replayable and graph submission has a one-response fast path
+
+- Status: Accepted; supersedes the planning-round budget in D-0069
+- Date: 2026-08-07
+- Decision: Start the conversation projection immediately with an honest runtime-authored intake record, then stream Provider reasoning summaries and model-authored planning tools. The Orchestration model may submit the complete typed graph through `submit_orchestration_graph` in that same Provider response; adapters that cannot combine planning and submission retain a bounded text-JSON fallback. Planning uses at most one observable tool round and three total Provider attempts, and a second quality-review request runs only for a concrete invalid, incomplete, non-executable, or broadly assigned graph. Persisted planning activities are replayed into the conversation after graph creation, thread switching, and desktop recovery. Global model-wait UI is visible only in the active conversation and is hard-disabled while paused, pausing, cancelling, idle, or terminal.
+- Consequence: A first message receives visible feedback before the remote Provider responds, compatible Providers avoid a mandatory second graph-generation request, and users can inspect the real delegation rationale after restart. A late model event cannot resurrect the moon while paused or make it float over Settings, Plan, Changes, Workers, Artifacts, or the orchestration canvas.
+
+## D-0075 - Public reasoning is model-authored and required before action
+
+- Status: Accepted; supersedes the runtime-authored intake and derived planning-summary portions of D-0072 and D-0074
+- Date: 2026-08-07
+- Decision: LunaScope treats public reasoning visibility as a runtime protocol, not presentation copy. The WebView may show a neutral model-wait lifecycle, but every reasoning card must contain either a Provider-native public reasoning summary or text/structured progress authored by the model. Runtime-generated observations, decisions, next actions, round counters, and graph-derived imitation reasoning are prohibited. Before graph generation, the Orchestration model produces a concrete public planning briefing with private thinking disabled; the formal graph call then retains the user's configured reasoning effort. Before a Worker executes any side-effecting or evidence-gathering tool, that response must contain Provider public reasoning, model commentary, or `report_progress`; otherwise the tool is not executed and the model must resubmit the action with a public summary. DeepSeek private `reasoning_content` remains replay-only for protocol continuity and is never projected as public thought.
+- Consequence: Users see task-specific model judgment, decomposition tradeoffs, evidence, and next actions for both the Orchestration model and named child Agents. Providers that cannot produce any public summary fail closed before an action instead of receiving synthetic filler. Public summaries are durable, replayable, source-labelled, and visually separated per Agent.
+
+## D-0076 - EventEnvelope v2 owns the complete Agent session tree
+
+- Status: Accepted
+- Date: 2026-08-09
+- Decision: Keep one append-only Rust `EventEnvelope` protocol and add optional `agentSessionId`, `parentSessionId`, `parentEventId`, and `relatedToolEventId`. Persist `AgentSessionRecord` for Primary, Orchestrator, Worker, Supervisor, Verifier, and Context Compressor identities. Store only durable user messages and final task summaries as `ConversationMessage`; operational reasoning, tools, verification, errors, and control records remain typed Agent events.
+- Consequence: Tool intent/result linkage, subagent ancestry, restart replay, and UI deduplication no longer depend on inferred role strings or browser storage. Schema v1 remains readable while new events serialize as v2.
+
+## D-0077 - Planner uses three tools and one compatibility continuation
+
+- Status: Accepted; supersedes the dedicated public-briefing call in D-0075 and the three-attempt wording in D-0074
+- Date: 2026-08-09
+- Decision: The first Orchestrator request exposes exactly `report_progress`, `update_orchestration_draft`, and `submit_orchestration_graph`. Request one concrete public summary, one evidence-linked candidate topology, and the final graph in the same response. Permit one continuation only when the protocol cannot combine those calls. A Provider-native summary or the exact model-authored final rationale/topology is public evidence; private reasoning never is. Local gates review only a concrete omission, broad assignment, write conflict, or missing verifier.
+- Consequence: Planning no longer spends a separate model call on explanatory prose or an unrelated `update_plan` checklist. The credential-backed DeepSeek graph canary fell from roughly five minutes in the broken path to 94.57 seconds while retaining eight fine-grained Workers and five-way parallelism.
+
+## D-0078 - Transport retry and verifier repair are separate policies
+
+- Status: Accepted
+- Date: 2026-08-09
+- Decision: A side-effect-free Provider request may retry five times after the initial attempt at 2, 5, 10, 20, and 40 seconds, respecting longer `Retry-After`; retries stop after any Provider output. Verifier repair has no fixed generation limit. It preserves passed nodes and pauses as `NeedsIntervention` only when three consecutive generations repeat both the fatal-defect fingerprint and the file/test/evidence fingerprint, or at a real user/permission/budget/environment boundary.
+- Consequence: Network recovery cannot replay successful tools, while a project is no longer abandoned merely because the fourth or seventh repair generation is needed. A deterministic test proves six progressing failed generations may be followed by a passing seventh.
+
+## D-0079 - Provider brand and wire protocol are independent
+
+- Status: Accepted
+- Date: 2026-08-09
+- Decision: Treat OpenAI, Anthropic, DeepSeek, GLM, Kimi, Qwen, Grok, and generic relays as configuration identities over OpenAI Responses, OpenAI Chat Completions, or Anthropic Messages. Normalize endpoints without duplicate `/v1`, emit protocol-native effort fields, and validate actual streaming/tool/reasoning behavior through the saved capability test rather than model-name guesses.
+- Consequence: OpenAI official and compatible relays can select Responses or Chat, custom base paths and headers remain possible, and normal UI consumes one normalized event stream.
+
+## D-0080 - The desktop shell keeps one viewport and batches event projection
+
+- Status: Accepted
+- Date: 2026-08-09
+- Decision: Keep one desktop content stage, batch transient event projection for 30-80 ms, patch known event/node IDs in place, cap the live transient timeline at 2,000 events, and keep graph pan/zoom/minimap state per orchestration. Use explicit CSP, custom accessible controls, the Windows GUI subsystem, and `CREATE_NO_WINDOW` for internal child processes.
+- Consequence: High-frequency streams no longer repeatedly serialize and rerender the complete conversation, graph updates do not reset the viewport, project switching avoids scrollbar jitter, and release/internal commands do not create a visible PowerShell console.
+
+## D-0081 - Graph geometry and public activity use compact stable projections
+
+- Status: Accepted
+- Date: 2026-08-09
+- Decision: Render the orchestration graph with fixed-size nodes, topology-level columns, upstream-barycenter ordering, fixed edge anchors, first-open fit, and a 0.12–2.0 zoom range. A committed graph replaces its planning draft instead of sharing the same full-height container. Conversation activity uses the task-derived Agent name and model-authored content directly; frontend taxonomy such as “model reasoning summary”, “observation”, “decision”, and “next” is not repeated in the visible message.
+- Consequence: Long task names cannot move edge anchors or overlap adjacent nodes, high-node-count graphs retain a complete overview plus zoomable detail, and the conversation reads as a concise activity stream instead of an explanatory AI dashboard. The underlying typed evidence and activity fields remain durable for inspection and verification.
+
+## D-0082 - Desktop chrome and project management use stable custom surfaces
+
+- Status: Accepted
+- Date: 2026-08-09
+- Decision: Run the main Tauri window without operating-system decorations and expose only accessible LunaScope window controls. Keep the project-management dialog, its scroll containers, and its column geometry mounted while selection changes patch bounded subregions. Reserve scrollbar gutters for persistent panes and use the shared custom-control layer for visible selects and decision dialogs. Retain semantic text inputs and textareas for IME and accessibility rather than replacing them with content-editable imitations.
+- Consequence: Project selection cannot flash because a scrollbar or full dialog shell is removed and reinserted, desktop chrome matches the product, and confirmations no longer fall back to Windows/browser-native prompts. Custom controls must continue to meet keyboard, focus, ARIA, high-DPI, and reduced-motion requirements.
+
+## D-0083 - Orchestration geometry is mounted from typed coordinates
+
+- Status: Accepted
+- Date: 2026-08-09
+- Decision: Treat generated graph markup as topology and coordinate data, then apply plane, phase, node, and minimap geometry after the packaged WebView has mounted the graph. Select the newest compatible plan projection, key viewports by orchestration version plus a topology fingerprint, rebind the ResizeObserver whenever the graph surface is mounted again, and render an explicit incomplete-data state instead of a synthetic empty graph.
+- Consequence: Packaged desktop rendering no longer depends on fragile `innerHTML` geometry attributes, stale plans cannot collapse a revised graph to a synthesis-only view, topology revisions receive a fresh fit without resetting later user pan/zoom, and route or window-size changes keep nodes, edges, phases, and the minimap aligned.

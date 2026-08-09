@@ -1,7 +1,4 @@
-use std::{
-    net::IpAddr,
-    time::{Duration, Instant},
-};
+use std::{net::IpAddr, time::Duration};
 
 use futures_util::StreamExt;
 use lunascope_core::{
@@ -23,6 +20,13 @@ use crate::{
 
 const MAX_ERROR_BODY_BYTES: usize = 8192;
 const ANTHROPIC_VERSION: &str = "2023-06-01";
+const TRANSPORT_RETRY_DELAYS: [Duration; 5] = [
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(20),
+    Duration::from_secs(40),
+];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -63,10 +67,19 @@ impl ProviderMessage {
     }
 
     pub fn assistant_tool_calls(text: impl Into<String>, calls: &[NormalizedToolCall]) -> Self {
+        Self::assistant_tool_calls_with_private_reasoning(text, calls, None)
+    }
+
+    pub fn assistant_tool_calls_with_private_reasoning(
+        text: impl Into<String>,
+        calls: &[NormalizedToolCall],
+        private_reasoning: Option<String>,
+    ) -> Self {
         Self {
             role: ProviderMessageRole::AssistantToolCall,
             content: serde_json::json!({
                 "text": text.into(),
+                "privateReasoning": private_reasoning,
                 "toolCalls": calls.iter().map(|call| serde_json::json!({
                     "callId": call.item_id,
                     "name": call.name,
@@ -223,12 +236,56 @@ impl NativeProviderClient {
         cancellation: CancellationToken,
         mut consumer: impl FnMut(NormalizedProviderEvent) -> Result<(), String>,
     ) -> Result<NormalizedStreamSummary, ProviderClientError> {
+        let mut retry_index = 0_usize;
+        loop {
+            let mut emitted_provider_output = false;
+            let result = self
+                .stream_once(invocation, timeout, cancellation.clone(), |event| {
+                    emitted_provider_output = true;
+                    consumer(event)
+                })
+                .await;
+            let Err(error) = result else {
+                return result;
+            };
+            if emitted_provider_output
+                || retry_index >= TRANSPORT_RETRY_DELAYS.len()
+                || !error.is_retriable_transport_failure()
+            {
+                return Err(error);
+            }
+            let delay = error
+                .retry_after()
+                .map(|retry_after| retry_after.max(TRANSPORT_RETRY_DELAYS[retry_index]))
+                .unwrap_or(TRANSPORT_RETRY_DELAYS[retry_index]);
+            consumer(NormalizedProviderEvent::TransportRetryScheduled {
+                attempt: u32::try_from(retry_index + 1).expect("retry count fits u32"),
+                maximum_retries: u32::try_from(TRANSPORT_RETRY_DELAYS.len())
+                    .expect("retry count fits u32"),
+                delay_seconds: delay.as_secs(),
+                reason: error.to_string(),
+            })
+            .map_err(ProviderClientError::Consumer)?;
+            retry_index += 1;
+            tokio::select! {
+                _ = cancellation.cancelled() => return Err(ProviderClientError::Cancelled),
+                _ = tokio::time::sleep(delay) => {}
+            }
+        }
+    }
+
+    async fn stream_once(
+        &self,
+        invocation: &ProviderInvocation,
+        timeout: Duration,
+        cancellation: CancellationToken,
+        mut consumer: impl FnMut(NormalizedProviderEvent) -> Result<(), String>,
+    ) -> Result<NormalizedStreamSummary, ProviderClientError> {
         if timeout.is_zero() {
             return Err(ProviderClientError::InvalidTimeout);
         }
         validate_invocation(invocation)?;
         let body = request_body(self.protocol, invocation);
-        let started = Instant::now();
         let response = tokio::select! {
             _ = cancellation.cancelled() => return Err(ProviderClientError::Cancelled),
             result = tokio::time::timeout(
@@ -238,10 +295,15 @@ impl NativeProviderClient {
         };
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            let remaining = timeout.saturating_sub(started.elapsed());
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .map(Duration::from_secs);
             let bytes = tokio::select! {
                 _ = cancellation.cancelled() => return Err(ProviderClientError::Cancelled),
-                result = tokio::time::timeout(remaining, response.bytes()) => {
+                result = tokio::time::timeout(timeout, response.bytes()) => {
                     result.map_err(|_| ProviderClientError::Timeout)??
                 }
             };
@@ -249,6 +311,7 @@ impl NativeProviderClient {
             return Err(ProviderClientError::HttpStatus {
                 status,
                 body: String::from_utf8_lossy(retained).into_owned(),
+                retry_after,
             });
         }
 
@@ -256,10 +319,9 @@ impl NativeProviderClient {
         let mut normalizer = ProtocolNormalizer::new(self.protocol);
         let mut stream = response.bytes_stream();
         loop {
-            let remaining = timeout.saturating_sub(started.elapsed());
             let next = tokio::select! {
                 _ = cancellation.cancelled() => return Err(ProviderClientError::Cancelled),
-                result = tokio::time::timeout(remaining, stream.next()) => {
+                result = tokio::time::timeout(timeout, stream.next()) => {
                     result.map_err(|_| ProviderClientError::Timeout)?
                 }
             };
@@ -277,6 +339,27 @@ impl NativeProviderClient {
     }
 }
 
+impl ProviderClientError {
+    fn is_retriable_transport_failure(&self) -> bool {
+        match self {
+            Self::Timeout => true,
+            Self::Http(error) => error.is_timeout() || error.is_connect() || error.is_request(),
+            Self::HttpStatus { status, .. } => {
+                matches!(*status, 408 | 409 | 425 | 429) || (500..=599).contains(status)
+            }
+            Self::Protocol(StreamProtocolError::TruncatedFrame) => true,
+            _ => false,
+        }
+    }
+
+    fn retry_after(&self) -> Option<Duration> {
+        match self {
+            Self::HttpStatus { retry_after, .. } => *retry_after,
+            _ => None,
+        }
+    }
+}
+
 pub fn validate_provider_config(config: &ProviderConfig) -> Result<(), ProviderClientError> {
     if config.id.trim().is_empty()
         || config.credential_reference_id.trim().is_empty()
@@ -286,15 +369,15 @@ pub fn validate_provider_config(config: &ProviderConfig) -> Result<(), ProviderC
         return Err(ProviderClientError::InvalidConfig);
     }
     let protocol_allowed = match config.provider_type {
-        ProviderType::OpenAi => config.protocol == ProviderProtocol::OpenAiResponses,
+        ProviderType::OpenAi | ProviderType::GenericOpenAiCompatible => matches!(
+            config.protocol,
+            ProviderProtocol::OpenAiResponses | ProviderProtocol::OpenAiChatCompletions
+        ),
         ProviderType::Anthropic => config.protocol == ProviderProtocol::AnthropicMessages,
         ProviderType::DeepSeek => matches!(
             config.protocol,
             ProviderProtocol::OpenAiChatCompletions | ProviderProtocol::AnthropicMessages
         ),
-        ProviderType::GenericOpenAiCompatible => {
-            config.protocol == ProviderProtocol::OpenAiChatCompletions
-        }
         ProviderType::GenericAnthropicCompatible => {
             config.protocol == ProviderProtocol::AnthropicMessages
         }
@@ -336,7 +419,8 @@ fn endpoint_url(config: &ProviderConfig) -> Result<Url, ProviderClientError> {
     let suffix = match config.protocol {
         ProviderProtocol::OpenAiResponses if path.ends_with("/v1") => "responses",
         ProviderProtocol::OpenAiResponses => "v1/responses",
-        ProviderProtocol::OpenAiChatCompletions => "chat/completions",
+        ProviderProtocol::OpenAiChatCompletions if path.ends_with("/v1") => "chat/completions",
+        ProviderProtocol::OpenAiChatCompletions => "v1/chat/completions",
         ProviderProtocol::AnthropicMessages if path.ends_with("/v1") => "messages",
         ProviderProtocol::AnthropicMessages => "v1/messages",
     };
@@ -429,20 +513,29 @@ fn request_body(protocol: ProviderProtocol, invocation: &ProviderInvocation) -> 
                     "type": if enabled { "enabled" } else { "disabled" }
                 });
             }
+            if let Some(effort) = &invocation.reasoning_effort {
+                body["reasoning_effort"] = Value::String(effort.clone());
+            }
             body
         }
-        ProviderProtocol::AnthropicMessages => serde_json::json!({
-            "model": invocation.model,
-            "system": invocation.instructions,
-            "messages": messages,
-            "tools": invocation.tools.iter().map(|tool| serde_json::json!({
-                "name": tool.name,
-                "description": tool.description,
-                "input_schema": tool.input_schema,
-            })).collect::<Vec<_>>(),
-            "max_tokens": invocation.max_output_tokens,
-            "stream": true,
-        }),
+        ProviderProtocol::AnthropicMessages => {
+            let mut body = serde_json::json!({
+                "model": invocation.model,
+                "system": invocation.instructions,
+                "messages": messages,
+                "tools": invocation.tools.iter().map(|tool| serde_json::json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "input_schema": tool.input_schema,
+                })).collect::<Vec<_>>(),
+                "max_tokens": invocation.max_output_tokens,
+                "stream": true,
+            });
+            if let Some(effort) = &invocation.reasoning_effort {
+                body["output_config"] = serde_json::json!({"effort": effort});
+            }
+            body
+        }
     }
 }
 
@@ -494,7 +587,7 @@ fn request_messages(protocol: ProviderProtocol, messages: &[ProviderMessage]) ->
                         }
                     }
                     ProviderProtocol::OpenAiChatCompletions => {
-                        result.push(serde_json::json!({
+                        let mut assistant = serde_json::json!({
                             "role": "assistant",
                             "content": if text.trim().is_empty() { Value::Null } else { Value::String(text.to_owned()) },
                             "tool_calls": calls.iter().map(|call| serde_json::json!({
@@ -507,7 +600,16 @@ fn request_messages(protocol: ProviderProtocol, messages: &[ProviderMessage]) ->
                                     ).unwrap_or_else(|_| "{}".into()),
                                 }
                             })).collect::<Vec<_>>(),
-                        }));
+                        });
+                        if let Some(reasoning) = message
+                            .content
+                            .get("privateReasoning")
+                            .and_then(Value::as_str)
+                            .filter(|value| !value.is_empty())
+                        {
+                            assistant["reasoning_content"] = Value::String(reasoning.to_owned());
+                        }
+                        result.push(assistant);
                     }
                     ProviderProtocol::AnthropicMessages => {
                         let mut content = Vec::new();
@@ -675,6 +777,24 @@ fn provider_user_content(protocol: ProviderProtocol, content: &Value) -> Value {
 mod tests {
     use super::*;
 
+    fn provider_config(provider_type: ProviderType, protocol: ProviderProtocol) -> ProviderConfig {
+        ProviderConfig {
+            id: "provider-test".into(),
+            provider_type,
+            protocol,
+            display_name: "Provider test".into(),
+            base_url: "https://relay.example.com".into(),
+            credential_reference_id: "provider-test-key".into(),
+            default_model_id: "model-test".into(),
+            custom_headers: Vec::new(),
+            context_window_tokens: None,
+            supports_tools: true,
+            supports_vision: false,
+            supports_structured_output: true,
+            enabled: true,
+        }
+    }
+
     fn tool_turn() -> Vec<ProviderMessage> {
         let calls = vec![NormalizedToolCall {
             item_id: "call-1".into(),
@@ -690,6 +810,81 @@ mod tests {
                 Value::String("contents".into()),
             ),
         ]
+    }
+
+    #[test]
+    fn openai_and_compatible_providers_accept_both_openai_protocols() {
+        for provider_type in [ProviderType::OpenAi, ProviderType::GenericOpenAiCompatible] {
+            for protocol in [
+                ProviderProtocol::OpenAiResponses,
+                ProviderProtocol::OpenAiChatCompletions,
+            ] {
+                validate_provider_config(&provider_config(provider_type, protocol))
+                    .expect("OpenAI transports are independently selectable");
+            }
+        }
+    }
+
+    #[test]
+    fn openai_endpoint_resolution_does_not_duplicate_or_omit_v1() {
+        let cases = [
+            (
+                "https://relay.example.com",
+                ProviderProtocol::OpenAiResponses,
+                "https://relay.example.com/v1/responses",
+            ),
+            (
+                "https://relay.example.com/v1",
+                ProviderProtocol::OpenAiResponses,
+                "https://relay.example.com/v1/responses",
+            ),
+            (
+                "https://relay.example.com",
+                ProviderProtocol::OpenAiChatCompletions,
+                "https://relay.example.com/v1/chat/completions",
+            ),
+            (
+                "https://relay.example.com/v1",
+                ProviderProtocol::OpenAiChatCompletions,
+                "https://relay.example.com/v1/chat/completions",
+            ),
+        ];
+        for (base_url, protocol, expected) in cases {
+            let mut config = provider_config(ProviderType::GenericOpenAiCompatible, protocol);
+            config.base_url = base_url.into();
+            assert_eq!(endpoint_url(&config).expect("endpoint").as_str(), expected);
+        }
+    }
+
+    #[test]
+    fn transport_retry_policy_is_five_incrementing_retries() {
+        assert_eq!(
+            TRANSPORT_RETRY_DELAYS,
+            [
+                Duration::from_secs(2),
+                Duration::from_secs(5),
+                Duration::from_secs(10),
+                Duration::from_secs(20),
+                Duration::from_secs(40),
+            ]
+        );
+        assert!(ProviderClientError::Timeout.is_retriable_transport_failure());
+        assert!(
+            ProviderClientError::HttpStatus {
+                status: 429,
+                body: String::new(),
+                retry_after: Some(Duration::from_secs(60)),
+            }
+            .is_retriable_transport_failure()
+        );
+        assert!(
+            !ProviderClientError::HttpStatus {
+                status: 401,
+                body: String::new(),
+                retry_after: None,
+            }
+            .is_retriable_transport_failure()
+        );
     }
 
     #[test]
@@ -743,6 +938,54 @@ mod tests {
         let anthropic = request_messages(ProviderProtocol::AnthropicMessages, &[message]);
         assert_eq!(anthropic[0]["content"][1]["type"], "image");
     }
+
+    #[test]
+    fn provider_native_effort_shapes_are_protocol_specific() {
+        let invocation = ProviderInvocation {
+            model: "model".into(),
+            instructions: None,
+            messages: vec![ProviderMessage {
+                role: ProviderMessageRole::User,
+                content: Value::String("hello".into()),
+            }],
+            tools: Vec::new(),
+            max_output_tokens: 128,
+            thinking_enabled: Some(true),
+            reasoning_effort: Some("max".into()),
+            reasoning_summary: None,
+        };
+        let chat = request_body(ProviderProtocol::OpenAiChatCompletions, &invocation);
+        assert_eq!(chat["thinking"]["type"], "enabled");
+        assert_eq!(chat["reasoning_effort"], "max");
+
+        let anthropic = request_body(ProviderProtocol::AnthropicMessages, &invocation);
+        assert_eq!(anthropic["output_config"]["effort"], "max");
+    }
+
+    #[test]
+    fn private_reasoning_is_replayed_only_on_chat_assistant_tool_turn() {
+        let calls = vec![NormalizedToolCall {
+            item_id: "call-private".into(),
+            name: "read_file".into(),
+            arguments: serde_json::json!({"path":"README.md"}),
+        }];
+        let message = ProviderMessage::assistant_tool_calls_with_private_reasoning(
+            "",
+            &calls,
+            Some("provider-private-thinking".into()),
+        );
+        let chat = request_messages(
+            ProviderProtocol::OpenAiChatCompletions,
+            std::slice::from_ref(&message),
+        );
+        assert_eq!(chat[0]["reasoning_content"], "provider-private-thinking");
+        let responses = request_messages(ProviderProtocol::OpenAiResponses, &[message]);
+        assert!(
+            responses
+                .iter()
+                .all(|item| item.get("reasoning_content").is_none())
+        );
+    }
 }
 
 fn insert_sensitive(
@@ -791,7 +1034,11 @@ pub enum ProviderClientError {
     #[error("provider request was cancelled")]
     Cancelled,
     #[error("provider returned HTTP {status}: {body}")]
-    HttpStatus { status: u16, body: String },
+    HttpStatus {
+        status: u16,
+        body: String,
+        retry_after: Option<Duration>,
+    },
     #[error("provider header name is invalid: {0}")]
     InvalidHeaderName(String),
     #[error("provider header value is invalid: {0}")]

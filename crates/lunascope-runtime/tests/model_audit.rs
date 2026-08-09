@@ -49,8 +49,11 @@ fn routing_decision_and_usage_survive_database_reopen() {
         provider_config_id: "anthropic-primary".into(),
         model_id: "claude-test".into(),
         role: ModelRole::Writing,
+        phase: "writing".into(),
         input_tokens: 41,
         output_tokens: 17,
+        cached_input_tokens: 0,
+        latency_ms: 120,
         total_cost_microusd: Some(84),
         fallback_from: None,
     };

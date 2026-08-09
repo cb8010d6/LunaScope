@@ -6,9 +6,9 @@ use thiserror::Error;
 use ts_rs::TS;
 
 use crate::{
-    ArtifactId, CheckpointId, CorrelationId, EventId, OrchestrationId, ProjectId, RetryPolicy,
-    RunId, RunState, ThreadId, WorkerBudget, WorkerCheckpointPolicy, WorkerField, WorkerId,
-    WorkerInputContext, WorkerOutputSchema, WorkerState,
+    AgentSessionId, ArtifactId, CheckpointId, CorrelationId, EventId, OrchestrationId, ProjectId,
+    RetryPolicy, RunId, RunState, ThreadId, WorkerBudget, WorkerCheckpointPolicy, WorkerField,
+    WorkerId, WorkerInputContext, WorkerOutputSchema, WorkerState,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -107,6 +107,20 @@ pub struct ReasoningSummaryRecord {
     pub summary: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct TransportRetryRecord {
+    pub request_id: String,
+    pub attempt: u32,
+    pub maximum_retries: u32,
+    #[ts(type = "number")]
+    pub delay_seconds: u64,
+    pub reason: String,
+    /// RFC 3339 UTC timestamp.
+    pub created_at: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(rename_all = "snake_case")]
@@ -125,6 +139,10 @@ pub struct ModelSelection {
     pub model: String,
     pub reason: String,
     pub fallback: bool,
+    #[serde(default)]
+    pub reasoning_effort: Option<crate::ReasoningEffort>,
+    #[serde(default)]
+    pub custom_reasoning_effort: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -132,6 +150,8 @@ pub struct ModelSelection {
 #[ts(rename_all = "camelCase")]
 pub struct WorkerSpec {
     pub worker_id: WorkerId,
+    #[serde(default)]
+    pub display_name: String,
     pub role: String,
     #[serde(default)]
     pub tags: Vec<String>,
@@ -142,6 +162,10 @@ pub struct WorkerSpec {
     pub expected_output: String,
     pub output_schema: WorkerOutputSchema,
     pub completion_criteria: Vec<String>,
+    #[serde(default)]
+    pub owned_acceptance_criteria: Vec<String>,
+    #[serde(default)]
+    pub parallel_group: Option<String>,
     pub model: ModelSelection,
     pub skills: Vec<String>,
     pub tools: Vec<String>,
@@ -351,9 +375,165 @@ pub struct OrchestrationChangeSet {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(rename_all = "snake_case")]
+pub enum RunControlKind {
+    Guidance,
+    Pause,
+    Resume,
+    Cancel,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum RunControlStatus {
+    Requested,
+    Queued,
+    Applied,
+    Rejected,
+    Settled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct RunControlRecord {
+    pub control_id: String,
+    pub control: RunControlKind,
+    pub status: RunControlStatus,
+    pub summary: String,
+    pub affected_worker_ids: Vec<WorkerId>,
+    /// RFC 3339 UTC timestamp.
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct AgentActivityItem {
+    pub activity_id: String,
+    #[serde(default)]
+    pub agent_kind: AgentKind,
+    #[serde(default)]
+    pub agent_id: String,
+    #[serde(default)]
+    pub display_name: String,
+    pub worker_id: Option<WorkerId>,
+    pub phase: String,
+    #[serde(default)]
+    pub waiting_for_model: bool,
+    pub observation: String,
+    pub decision: String,
+    pub next_action: String,
+    pub evidence_refs: Vec<String>,
+    pub source: ReasoningSummarySource,
+    /// RFC 3339 UTC timestamp.
+    pub created_at: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum AgentKind {
+    #[default]
+    OrchestrationModel,
+    Worker,
+    Verifier,
+    ContextCompressor,
+    Supervisor,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum OrchestrationPlanningStage {
+    EvaluatingDelegation,
+    ExtractingAcceptanceCriteria,
+    DecomposingWork,
+    AuditingWriteScopes,
+    SchedulingParallelism,
+    ReviewingPlan,
+    CommittingGraph,
+    ReplanningGuidance,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct OrchestrationDraftWorker {
+    pub draft_id: String,
+    pub display_name: String,
+    pub task: String,
+    pub dependency_draft_ids: Vec<String>,
+    pub parallel_group: Option<String>,
+    pub write_scopes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct OrchestrationPlanningActivity {
+    pub activity_id: String,
+    pub stage: OrchestrationPlanningStage,
+    pub summary: String,
+    pub evidence: Vec<String>,
+    pub next_action: String,
+    pub draft_version: u32,
+    pub draft_workers: Vec<OrchestrationDraftWorker>,
+    pub created_at: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum SupervisorDecisionKind {
+    Continue,
+    GuideRunning,
+    ReviseQueued,
+    HoldDispatch,
+    ReassignFailed,
+    SpawnRepair,
+    RequestVerification,
+    StopForFatalPolicy,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct SupervisorDecisionRecord {
+    pub decision_id: String,
+    pub kind: SupervisorDecisionKind,
+    pub summary: String,
+    pub affected_worker_ids: Vec<WorkerId>,
+    pub evidence_refs: Vec<String>,
+    /// RFC 3339 UTC timestamp.
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
+pub struct OrchestrationRevisionRecord {
+    pub revision_id: String,
+    pub from_version: u32,
+    pub to_version: u32,
+    pub reason: String,
+    pub affected_worker_ids: Vec<WorkerId>,
+    pub summary: String,
+    /// RFC 3339 UTC timestamp.
+    pub created_at: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
 pub enum EventType {
     RunCreated,
     RunStateChanged,
+    RunControlRecorded,
+    AgentActivityRecorded,
+    OrchestrationPlanningActivityRecorded,
+    SupervisorDecisionRecorded,
+    OrchestrationRevisionRecorded,
     PlanUpdated,
     OrchestrationDecided,
     OrchestrationCreated,
@@ -365,6 +545,7 @@ pub enum EventType {
     AgentPlanUpdated,
     ModelRoutingDecided,
     ModelUsageRecorded,
+    TransportRetryScheduled,
     ToolCallRequested,
     ToolCallCompleted,
     ApprovalRequested,
@@ -391,6 +572,21 @@ pub enum EventData {
         from: RunState,
         to: RunState,
         reason: String,
+    },
+    RunControlRecorded {
+        record: RunControlRecord,
+    },
+    AgentActivityRecorded {
+        item: AgentActivityItem,
+    },
+    OrchestrationPlanningActivityRecorded {
+        activity: OrchestrationPlanningActivity,
+    },
+    SupervisorDecisionRecorded {
+        record: SupervisorDecisionRecord,
+    },
+    OrchestrationRevisionRecorded {
+        record: OrchestrationRevisionRecord,
     },
     PlanUpdated {
         version: u32,
@@ -438,6 +634,10 @@ pub enum EventData {
     },
     ModelUsageRecorded {
         usage: crate::ModelUsageRecord,
+    },
+    TransportRetryScheduled {
+        worker_id: Option<WorkerId>,
+        record: TransportRetryRecord,
     },
     ToolCallRequested {
         worker_id: Option<WorkerId>,
@@ -497,6 +697,13 @@ impl EventData {
         match self {
             Self::RunCreated { .. } => EventType::RunCreated,
             Self::RunStateChanged { .. } => EventType::RunStateChanged,
+            Self::RunControlRecorded { .. } => EventType::RunControlRecorded,
+            Self::AgentActivityRecorded { .. } => EventType::AgentActivityRecorded,
+            Self::OrchestrationPlanningActivityRecorded { .. } => {
+                EventType::OrchestrationPlanningActivityRecorded
+            }
+            Self::SupervisorDecisionRecorded { .. } => EventType::SupervisorDecisionRecorded,
+            Self::OrchestrationRevisionRecorded { .. } => EventType::OrchestrationRevisionRecorded,
             Self::PlanUpdated { .. } => EventType::PlanUpdated,
             Self::OrchestrationDecided { .. } => EventType::OrchestrationDecided,
             Self::OrchestrationCreated { .. } => EventType::OrchestrationCreated,
@@ -508,6 +715,7 @@ impl EventData {
             Self::AgentPlanUpdated { .. } => EventType::AgentPlanUpdated,
             Self::ModelRoutingDecided { .. } => EventType::ModelRoutingDecided,
             Self::ModelUsageRecorded { .. } => EventType::ModelUsageRecorded,
+            Self::TransportRetryScheduled { .. } => EventType::TransportRetryScheduled,
             Self::ToolCallRequested { .. } => EventType::ToolCallRequested,
             Self::ToolCallCompleted { .. } => EventType::ToolCallCompleted,
             Self::ApprovalRequested { .. } => EventType::ApprovalRequested,
@@ -539,6 +747,14 @@ pub struct EventEnvelope {
     pub run_id: RunId,
     pub orchestration_id: Option<OrchestrationId>,
     pub worker_id: Option<WorkerId>,
+    #[serde(default)]
+    pub agent_session_id: Option<AgentSessionId>,
+    #[serde(default)]
+    pub parent_session_id: Option<AgentSessionId>,
+    #[serde(default)]
+    pub parent_event_id: Option<EventId>,
+    #[serde(default)]
+    pub related_tool_event_id: Option<EventId>,
     pub correlation_id: CorrelationId,
     pub causation_id: Option<EventId>,
     pub event_type: EventType,
@@ -565,13 +781,17 @@ impl EventEnvelope {
         Self {
             event_id,
             sequence,
-            schema_version: 1,
+            schema_version: 2,
             timestamp: timestamp.into(),
             project_id,
             thread_id,
             run_id,
             orchestration_id: None,
             worker_id: None,
+            agent_session_id: None,
+            parent_session_id: None,
+            parent_event_id: None,
+            related_tool_event_id: None,
             correlation_id,
             causation_id: None,
             event_type,
@@ -654,6 +874,16 @@ pub struct RuntimeSnapshot {
     pub agent_plans: BTreeMap<String, AgentPlan>,
     #[serde(default)]
     pub reasoning_summaries: BTreeMap<String, Vec<ReasoningSummaryRecord>>,
+    #[serde(default)]
+    pub activity_items: Vec<AgentActivityItem>,
+    #[serde(default)]
+    pub orchestration_planning_activities: Vec<OrchestrationPlanningActivity>,
+    #[serde(default)]
+    pub run_controls: Vec<RunControlRecord>,
+    #[serde(default)]
+    pub supervisor_decisions: Vec<SupervisorDecisionRecord>,
+    #[serde(default)]
+    pub orchestration_revisions: Vec<OrchestrationRevisionRecord>,
     pub pending_approvals: Vec<ApprovalRequest>,
     pub artifact_ids: Vec<ArtifactId>,
     pub verification: VerificationStatus,
@@ -682,6 +912,11 @@ impl RuntimeSnapshot {
             workers: BTreeMap::new(),
             agent_plans: BTreeMap::new(),
             reasoning_summaries: BTreeMap::new(),
+            activity_items: Vec::new(),
+            orchestration_planning_activities: Vec::new(),
+            run_controls: Vec::new(),
+            supervisor_decisions: Vec::new(),
+            orchestration_revisions: Vec::new(),
             pending_approvals: Vec::new(),
             artifact_ids: Vec::new(),
             verification: VerificationStatus::Unverified,
@@ -778,6 +1013,40 @@ impl RuntimeSnapshot {
                 records.push(record.clone());
                 if records.len() > 12 {
                     records.drain(..records.len() - 12);
+                }
+            }
+            EventData::AgentActivityRecorded { item } => {
+                self.activity_items.push(item.clone());
+                if self.activity_items.len() > 160 {
+                    self.activity_items.drain(..self.activity_items.len() - 160);
+                }
+            }
+            EventData::OrchestrationPlanningActivityRecorded { activity } => {
+                self.orchestration_planning_activities
+                    .push(activity.clone());
+                if self.orchestration_planning_activities.len() > 48 {
+                    self.orchestration_planning_activities
+                        .drain(..self.orchestration_planning_activities.len() - 48);
+                }
+            }
+            EventData::RunControlRecorded { record } => {
+                self.run_controls.push(record.clone());
+                if self.run_controls.len() > 48 {
+                    self.run_controls.drain(..self.run_controls.len() - 48);
+                }
+            }
+            EventData::SupervisorDecisionRecorded { record } => {
+                self.supervisor_decisions.push(record.clone());
+                if self.supervisor_decisions.len() > 48 {
+                    self.supervisor_decisions
+                        .drain(..self.supervisor_decisions.len() - 48);
+                }
+            }
+            EventData::OrchestrationRevisionRecorded { record } => {
+                self.orchestration_revisions.push(record.clone());
+                if self.orchestration_revisions.len() > 48 {
+                    self.orchestration_revisions
+                        .drain(..self.orchestration_revisions.len() - 48);
                 }
             }
             EventData::OrchestrationPatched { plan, .. } => {

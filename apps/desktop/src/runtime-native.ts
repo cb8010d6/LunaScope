@@ -1,5 +1,6 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   disposeCompanionSettingsPreview,
@@ -8,9 +9,16 @@ import {
   syncCompanionActivity,
 } from "./companion/host";
 import type { ExecutionActivity } from "./companion/types";
+import {
+  installCustomControls,
+  refreshCustomControls,
+  requestConfirmation,
+  showNotice,
+} from "./ui/custom-controls";
 import type {
   AgentPlan,
   ConversationMessage,
+  ConversationThread,
   Course,
   CourseSearchHit,
   CourseSourceKind,
@@ -34,6 +42,7 @@ import type {
   NaturalLanguageRoutingDraft,
   OrchestrationPatch,
   OrchestrationChangeSet,
+  OrchestrationPlanningActivity,
   OrchestrationRunResult,
   OrchestrationSession,
   ProviderConfig,
@@ -120,6 +129,15 @@ type LunaScopeUiBridge = {
     projectId: string;
     runId: string;
   }): void;
+  mergeConversationThreads(
+    threads: Array<{
+      id: string;
+      title: string;
+      projectId: string;
+      runId: string | null;
+      updatedAt: string;
+    }>,
+  ): void;
   renameConversation(threadId: string, title: string): boolean;
   bindConversationRun(threadId: string, runId: string): boolean;
   activateConversation(threadId: string): ActiveConversationReference | null;
@@ -151,6 +169,11 @@ type LunaScopeUiBridge = {
     state: string;
     detail: string;
   }): void;
+  setGlobalThinkingState(state: {
+    mode: "waiting" | "streaming";
+    title: string;
+    detail: string;
+  } | null): void;
   mergeConversationEvents(
     threadId: string,
     events: Array<{
@@ -171,7 +194,9 @@ type LunaScopeUiBridge = {
     openOrchestration?: boolean;
     retryConversation?: boolean;
     trackHistory?: boolean;
+    agentId?: string;
   }): void;
+  removeConversationEvent(eventId: string): void;
 };
 
 declare global {
@@ -187,7 +212,6 @@ function setExecutionActivity(activity: ExecutionActivity): void {
 
 const bootstrapRunId = "run-native-bootstrap";
 const globalRoutingScope = "global";
-const retrySourceRunStorageKey = "lunascope.native.retrySourceRunId";
 const automaticFailedWorkerRetryLimit = 2;
 const workerRoleCatalog = [
   ["planner", "Planner / 规划", "planning, coordination"],
@@ -213,13 +237,25 @@ let nativeOrchestrationResult: OrchestrationRunResult | null = null;
 let nativeChangeSets: OrchestrationChangeSet[] = [];
 let nativeSourceRunIds: string[] = [];
 let nativeProjectionPlan: OrchestrationSession["plan"] | null = null;
+let nativePlanningDraft: OrchestrationPlanningActivity | null = null;
 let nativeAgentPlans: Record<string, AgentPlan> = {};
-let nativeRetrySourceRunId: string | null = localStorage.getItem(
-  retrySourceRunStorageKey,
-);
+let nativeRetrySourceRunId: string | null = null;
 let nativeOrchestrationRunning = false;
 let nativeOrchestrationPaused = false;
+let nativeOrchestrationExecuting = false;
+let nativeRunPhase:
+  | "idle"
+  | "planning"
+  | "running"
+  | "guiding"
+  | "pausing"
+  | "paused"
+  | "cancelling" = "idle";
 const runtimeReasoningText = new Map<string, string>();
+const activeModelLifecycles = new Map<
+  string,
+  { workerId: string | null; displayName: string; phase: "waiting" | "streaming" }
+>();
 let nativeInspector:
   | { kind: "orchestrator" | "worker" | "synthesis"; workerIndex?: number }
   | null = null;
@@ -229,6 +265,30 @@ let nativeOrchestrationMode:
   | "runtime"
   | "queue"
   | "handoffs" = "blueprint";
+type GraphViewport = {
+  x: number;
+  y: number;
+  scale: number;
+  userAdjusted: boolean;
+};
+const graphViewports = new Map<string, GraphViewport>();
+let graphResizeObserver: ResizeObserver | null = null;
+let graphDrag:
+  | {
+      pointerId: number;
+      startX: number;
+      startY: number;
+      originX: number;
+      originY: number;
+    }
+  | null = null;
+let projectScrollbarDrag:
+  | {
+      pointerId: number;
+      startY: number;
+      startScrollTop: number;
+    }
+  | null = null;
 let ultraNoteWorkspace: UltraNoteWorkspace | null = null;
 let ultraNoteCourses: Course[] = [];
 let ultraNotePolicy: HomeworkPolicyDecision | null = null;
@@ -271,7 +331,6 @@ type ComputerAccessMode =
   | "request_approval"
   | "self_approve"
   | "full_access";
-const accessSettingsKey = "lunascope-native-access-settings";
 let computerAccessMode: ComputerAccessMode = "self_approve";
 let bypassMode = false;
 let extensionDirectories: ExtensionDirectories = {
@@ -298,13 +357,15 @@ let modelSelectionSettings: ModelSelectionSettings = {
     role: "orchestration",
     providerConfigId: "openai-primary",
     modelId: "gpt-5-mini",
-    reasoningEffort: "high",
+    customReasoningEffort: null,
+    reasoningEffort: "auto",
     maximumContextTokens: null,
     maximumBudgetMicrousd: null,
     fallbackProviderConfigId: null,
     fallbackModelId: null,
     locked: false,
   },
+  vision: null,
   workerPool: [
     ["programming", "openai-primary", "gpt-5-mini"],
     ["writing", "anthropic-primary", "claude-sonnet"],
@@ -313,14 +374,33 @@ let modelSelectionSettings: ModelSelectionSettings = {
     role: role as ModelRole,
     providerConfigId,
     modelId,
-    reasoningEffort: "medium",
+    customReasoningEffort: null,
+    reasoningEffort: "auto",
     maximumContextTokens: null,
     maximumBudgetMicrousd: null,
     fallbackProviderConfigId: null,
     fallbackModelId: null,
     locked: false,
   })),
+  customReasoningEfforts: {},
 };
+
+function reasoningProfileKey(providerConfigId: string, modelId: string): string {
+  return `${providerConfigId}\u0000${modelId}`;
+}
+
+function customReasoningEffortValue(
+  assignment: ModelAssignment | null | undefined,
+): string {
+  if (!assignment) return "";
+  return (
+    assignment.customReasoningEffort ??
+    modelSelectionSettings.customReasoningEfforts[
+      reasoningProfileKey(assignment.providerConfigId, assignment.modelId)
+    ] ??
+    (assignment.reasoningEffort === "auto" ? "" : assignment.reasoningEffort)
+  );
+}
 
 function escapeHtml(value: unknown): string {
   return String(value)
@@ -336,22 +416,8 @@ function errorMessage(error: unknown): string {
 }
 
 function loadAccessSettings(): void {
-  try {
-    const stored = JSON.parse(
-      localStorage.getItem(accessSettingsKey) ?? "{}",
-    ) as { mode?: ComputerAccessMode; bypass?: boolean };
-    if (
-      stored.mode === "request_approval" ||
-      stored.mode === "self_approve" ||
-      stored.mode === "full_access"
-    ) {
-      computerAccessMode = stored.mode;
-    }
-    bypassMode = Boolean(stored.bypass);
-  } catch {
-    computerAccessMode = "self_approve";
-    bypassMode = false;
-  }
+  computerAccessMode = "self_approve";
+  bypassMode = false;
 }
 
 function applyAccessSettings(): void {
@@ -362,13 +428,10 @@ function applyAccessSettings(): void {
   if (bypass) bypass.checked = bypassMode;
   document.documentElement.dataset.computerAccess = computerAccessMode;
   document.documentElement.dataset.bypassMode = String(bypassMode);
+  refreshCustomControls(document);
 }
 
 function saveAccessSettings(): void {
-  localStorage.setItem(
-    accessSettingsKey,
-    JSON.stringify({ mode: computerAccessMode, bypass: bypassMode }),
-  );
   applyAccessSettings();
 }
 
@@ -408,6 +471,15 @@ function applyUiLanguage(): void {
   text("#send", "发送", "Send");
   text("#headerMeta", "本地 Agent 工作台", "Local agent workspace");
   text("#runConfig", "选择模型 · 自动路由", "Select model · Auto routing");
+  const windowLabels: Record<string, [string, string]> = {
+    windowMinimize: ["最小化窗口", "Minimize window"],
+    windowMaximize: ["最大化或还原窗口", "Maximize or restore window"],
+    windowClose: ["关闭 LunaScope", "Close LunaScope"],
+  };
+  for (const [id, labels] of Object.entries(windowLabels)) {
+    const button = document.querySelector<HTMLButtonElement>(`#${id}`);
+    if (button) button.setAttribute("aria-label", chinese ? labels[0] : labels[1]);
+  }
   document
     .querySelectorAll<HTMLElement>("[data-empty-title-zh]")
     .forEach((card) => {
@@ -504,38 +576,90 @@ function captureProjectDraftFields(): void {
     projectDraftCourseCode;
 }
 
+function syncProjectListScrollbar(): void {
+  const scroll = document.querySelector<HTMLElement>("#nativeProjectListScroll");
+  const track = document.querySelector<HTMLElement>("#nativeProjectScrollTrack");
+  const thumb = document.querySelector<HTMLElement>("#nativeProjectScrollThumb");
+  if (!scroll || !track || !thumb) return;
+  const maximumScroll = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+  track.hidden = maximumScroll <= 1;
+  if (track.hidden) return;
+  const trackHeight = track.clientHeight;
+  const thumbHeight = Math.max(
+    38,
+    Math.min(trackHeight, (scroll.clientHeight / scroll.scrollHeight) * trackHeight),
+  );
+  const availableTravel = Math.max(0, trackHeight - thumbHeight);
+  const thumbTop = maximumScroll
+    ? (scroll.scrollTop / maximumScroll) * availableTravel
+    : 0;
+  thumb.style.height = `${thumbHeight}px`;
+  thumb.style.transform = `translate3d(0, ${thumbTop}px, 0)`;
+}
+
 function renderProjectDialog(): void {
   const dialog = ensureProjectDialog();
   const selected = projects.find(
     (project) => project.projectId === activeProjectId,
   );
-  dialog.innerHTML = `
-    <div class="dialog wide">
-      <div class="dialog-head"><div><strong>${tr("项目管理", "Project management")}</strong><div class="mono">${tr("多文件夹 · 单一 Workspace", "Multiple folders · one workspace")}</div></div><button class="icon-btn" type="button" data-native-action="project-close">×</button></div>
-      <div class="dialog-body project-manager">
-        <aside class="project-list">
-          <div class="pane-head" style="padding-inline:0"><strong>${tr("项目", "Projects")}</strong><button class="ghost-btn" type="button" data-native-action="project-new">${tr("新建", "New")}</button></div>
-          ${
-            projects.length
-              ? projects
-                  .map(
-                    (project) => `<button class="list-item ${project.projectId === activeProjectId ? "active" : ""}" type="button" data-native-action="project-edit" data-project-id="${escapeHtml(project.projectId)}"><strong>${escapeHtml(project.name)}</strong><span>${project.folders.length} ${tr("个文件夹", "folders")} · ${escapeHtml(project.folders.find((folder) => folder.isWorkspace)?.displayName ?? "")}</span></button>`,
-                  )
-                  .join("")
-              : `<p class="ultranote-empty">${tr("还没有项目。", "No projects yet.")}</p>`
-          }
-        </aside>
-        <section class="project-editor">
-          <div class="field"><label for="nativeProjectName">${tr("项目名称", "Project name")}</label><input class="input" id="nativeProjectName" value="${escapeHtml(projectDraftName)}" placeholder="${tr("我的项目", "My project")}"></div>
-          <div class="field"><label for="nativeProjectKind">${tr("项目类型", "Project type")}</label><select class="select" id="nativeProjectKind"><option value="general" ${projectDraftKind === "general" ? "selected" : ""}>${tr("通用 Agent 项目", "General Agent project")}</option><option value="ultra_note" ${projectDraftKind === "ultra_note" ? "selected" : ""}>UltraNote</option></select><span class="settings-help">${tr("UltraNote 项目中的每个对话都会自动使用课程上下文。", "Every conversation in an UltraNote project automatically uses its course context.")}</span></div>
-          ${projectDraftKind === "ultra_note" ? `<section class="settings-card ultranote-project-onboarding"><div class="settings-card-head"><div><strong>${tr("课程基础信息", "Course foundation")}</strong><span>${tr("课程大纲由编排模型解析，并持久化到项目课程记忆。", "The Orchestration model parses the syllabus into persistent course memory.")}</span></div></div><div class="settings-grid"><div class="field"><label for="nativeCourseTitle">${tr("课程名称", "Course name")}</label><input class="input" id="nativeCourseTitle" value="${escapeHtml(projectDraftCourseTitle)}"></div><div class="field"><label for="nativeCourseCode">${tr("课程编号", "Course code")}</label><input class="input" id="nativeCourseCode" value="${escapeHtml(projectDraftCourseCode)}"></div></div><div class="field"><label>${tr("课程大纲", "Syllabus")}</label><div class="row"><button class="ghost-btn" type="button" data-native-action="project-select-syllabus">${tr("选择课程大纲", "Choose syllabus")}</button>${projectDraftSyllabus ? `<span class="attachment-chip">${escapeHtml(projectDraftSyllabus.displayName)}</span>` : `<span class="settings-help">${tr("支持 PDF、PPTX、DOCX、XLSX、Markdown 和文本。", "PDF, PPTX, DOCX, XLSX, Markdown, and text are supported.")}</span>`}</div></div></section>` : ""}
-          <div class="pane-head" style="padding-inline:0"><div><strong>${tr("项目文件夹", "Project folders")}</strong><span class="settings-help">${tr("选择一个或多个文件夹，并指定其中一个作为 Agent 的 workspace。", "Choose one or more folders and designate one as the Agent workspace.")}</span></div><button class="ghost-btn" type="button" data-native-action="project-select-folders">${tr("选择文件夹", "Choose folders")}</button></div>
-          <div class="project-folder-list">${projectFolderRows()}</div>
-          <div class="settings-status" id="projectActionStatus" role="status"></div>
-        </section>
-      </div>
-      <div class="dialog-foot"><span class="settings-help">${selected ? tr(`当前项目：${selected.name}`, `Active project: ${selected.name}`) : tr("未选择当前项目", "No active project")}</span><div class="row">${editingProjectId ? `<button class="text-btn" style="color:var(--danger)" type="button" data-native-action="project-delete" data-project-id="${escapeHtml(editingProjectId)}">${tr("删除项目", "Delete project")}</button>` : ""}<button class="ghost-btn" type="button" data-native-action="project-close">${tr("取消", "Cancel")}</button><button class="primary-btn" type="button" data-native-action="project-save">${tr("保存项目", "Save project")}</button></div></div>
+  if (!dialog.querySelector("[data-project-manager-shell]")) {
+    dialog.setAttribute("aria-labelledby", "nativeProjectDialogTitle");
+    dialog.innerHTML = `
+      <div class="dialog wide project-dialog" data-project-manager-shell>
+        <div class="dialog-head"><div><strong id="nativeProjectDialogTitle"></strong><div class="mono" id="nativeProjectDialogMeta"></div></div><button class="icon-btn" type="button" data-native-action="project-close">×</button></div>
+        <div class="dialog-body project-manager">
+          <aside class="project-list-frame">
+            <div class="project-list" id="nativeProjectListScroll">
+              <div class="pane-head project-list-head"><strong id="nativeProjectListTitle"></strong><button class="ghost-btn" type="button" data-native-action="project-new"></button></div>
+              <div id="nativeProjectListItems"></div>
+            </div>
+            <div class="project-scrollbar" id="nativeProjectScrollTrack" aria-hidden="true"><div class="project-scrollbar-thumb" id="nativeProjectScrollThumb"></div></div>
+          </aside>
+          <section class="project-editor" id="nativeProjectEditor"></section>
+        </div>
+        <div class="dialog-foot" id="nativeProjectDialogFoot"></div>
+      </div>`;
+  }
+
+  const title = dialog.querySelector<HTMLElement>("#nativeProjectDialogTitle");
+  const meta = dialog.querySelector<HTMLElement>("#nativeProjectDialogMeta");
+  const listTitle = dialog.querySelector<HTMLElement>("#nativeProjectListTitle");
+  const newButton = dialog.querySelector<HTMLButtonElement>(
+    '[data-native-action="project-new"]',
+  );
+  const closeButton = dialog.querySelector<HTMLButtonElement>(
+    '[data-native-action="project-close"]',
+  );
+  const list = dialog.querySelector<HTMLElement>("#nativeProjectListItems");
+  const editor = dialog.querySelector<HTMLElement>("#nativeProjectEditor");
+  const foot = dialog.querySelector<HTMLElement>("#nativeProjectDialogFoot");
+  if (!title || !meta || !listTitle || !newButton || !closeButton || !list || !editor || !foot) {
+    return;
+  }
+  title.textContent = tr("项目管理", "Project management");
+  meta.textContent = tr("多文件夹 · 单一 Workspace", "Multiple folders · one workspace");
+  listTitle.textContent = tr("项目", "Projects");
+  newButton.textContent = tr("新建", "New");
+  closeButton.setAttribute("aria-label", tr("关闭", "Close"));
+  list.innerHTML = projects.length
+    ? projects
+        .map(
+          (project) => `<button class="list-item ${project.projectId === activeProjectId ? "active" : ""}" type="button" data-native-action="project-edit" data-project-id="${escapeHtml(project.projectId)}"><strong>${escapeHtml(project.name)}</strong><span>${project.folders.length} ${tr("个文件夹", "folders")} · ${escapeHtml(project.folders.find((folder) => folder.isWorkspace)?.displayName ?? "")}</span></button>`,
+        )
+        .join("")
+    : `<p class="ultranote-empty">${tr("还没有项目。", "No projects yet.")}</p>`;
+  editor.innerHTML = `
+    <div class="project-editor-content">
+      <div class="field"><label for="nativeProjectName">${tr("项目名称", "Project name")}</label><input class="input" id="nativeProjectName" value="${escapeHtml(projectDraftName)}" placeholder="${tr("我的项目", "My project")}"></div>
+      <div class="field"><label for="nativeProjectKind">${tr("项目类型", "Project type")}</label><select class="select" id="nativeProjectKind"><option value="general" ${projectDraftKind === "general" ? "selected" : ""}>${tr("通用 Agent 项目", "General Agent project")}</option><option value="ultra_note" ${projectDraftKind === "ultra_note" ? "selected" : ""}>UltraNote</option></select><span class="settings-help">${tr("UltraNote 项目中的每个对话都会自动使用课程上下文。", "Every conversation in an UltraNote project automatically uses its course context.")}</span></div>
+      ${projectDraftKind === "ultra_note" ? `<section class="settings-card ultranote-project-onboarding"><div class="settings-card-head"><div><strong>${tr("课程基础信息", "Course foundation")}</strong><span>${tr("课程大纲由编排模型解析，并持久化到项目课程记忆。", "The Orchestration model parses the syllabus into persistent course memory.")}</span></div></div><div class="settings-grid"><div class="field"><label for="nativeCourseTitle">${tr("课程名称", "Course name")}</label><input class="input" id="nativeCourseTitle" value="${escapeHtml(projectDraftCourseTitle)}"></div><div class="field"><label for="nativeCourseCode">${tr("课程编号", "Course code")}</label><input class="input" id="nativeCourseCode" value="${escapeHtml(projectDraftCourseCode)}"></div></div><div class="field"><label>${tr("课程大纲", "Syllabus")}</label><div class="row"><button class="ghost-btn" type="button" data-native-action="project-select-syllabus">${tr("选择课程大纲", "Choose syllabus")}</button>${projectDraftSyllabus ? `<span class="attachment-chip">${escapeHtml(projectDraftSyllabus.displayName)}</span>` : `<span class="settings-help">${tr("支持 PDF、PPTX、DOCX、XLSX、Markdown 和文本。", "PDF, PPTX, DOCX, XLSX, Markdown, and text are supported.")}</span>`}</div></div></section>` : ""}
+      <div class="pane-head project-folders-head"><div><strong>${tr("项目文件夹", "Project folders")}</strong><span class="settings-help">${tr("选择一个或多个文件夹，并指定其中一个作为 Agent 的 workspace。", "Choose one or more folders and designate one as the Agent workspace.")}</span></div><button class="ghost-btn" type="button" data-native-action="project-select-folders">${tr("选择文件夹", "Choose folders")}</button></div>
+      <div class="project-folder-list">${projectFolderRows()}</div>
+      <div class="settings-status" id="projectActionStatus" role="status"></div>
     </div>`;
+  foot.innerHTML = `<span class="settings-help">${selected ? tr(`当前项目：${selected.name}`, `Active project: ${selected.name}`) : tr("未选择当前项目", "No active project")}</span><div class="row">${editingProjectId ? `<button class="text-btn danger" type="button" data-native-action="project-delete" data-project-id="${escapeHtml(editingProjectId)}">${tr("删除项目", "Delete project")}</button>` : ""}<button class="ghost-btn" type="button" data-native-action="project-close">${tr("取消", "Cancel")}</button><button class="primary-btn" type="button" data-native-action="project-save">${tr("保存项目", "Save project")}</button></div>`;
+  refreshCustomControls(dialog);
+  requestAnimationFrame(syncProjectListScrollbar);
 }
 
 async function openProjectManager(createNew = false): Promise<void> {
@@ -581,7 +705,8 @@ async function openProjectManager(createNew = false): Promise<void> {
     }
   }
   renderProjectDialog();
-  ensureProjectDialog().showModal();
+  const dialog = ensureProjectDialog();
+  if (!dialog.open) dialog.showModal();
 }
 
 function activeProject(): LunaProject | undefined {
@@ -639,12 +764,10 @@ function applyActiveConversationReference(
   nativeChangeSets = stored?.changeSets ?? [];
   nativeSourceRunIds = stored?.sourceRunIds ?? [];
   nativeAgentPlans = stored?.agentPlans ?? {};
+  projectPlanningActivities(
+    stored?.session?.snapshot.orchestrationPlanningActivities,
+  );
   nativeRetrySourceRunId = stored?.retrySourceRunId ?? null;
-  if (nativeRetrySourceRunId) {
-    localStorage.setItem(retrySourceRunStorageKey, nativeRetrySourceRunId);
-  } else {
-    localStorage.removeItem(retrySourceRunStorageKey);
-  }
   if (!nativeOrchestrationSession) window.lunaScopeUi?.clearOrchestration();
   syncActiveWorkspace();
   applyUiLanguage();
@@ -688,6 +811,26 @@ async function hydrateDurableConversation(threadId: string): Promise<void> {
   }
 }
 
+async function hydrateDurableConversationThreads(): Promise<void> {
+  if (!isTauri() || !projects.length) return;
+  const perProject = await Promise.all(
+    projects.map((project) =>
+      invoke<ConversationThread[]>("list_conversation_threads", {
+        projectId: project.projectId,
+      }),
+    ),
+  );
+  window.lunaScopeUi?.mergeConversationThreads(
+    perProject.flat().map((thread) => ({
+      id: thread.threadId,
+      title: thread.title,
+      projectId: thread.projectId,
+      runId: thread.activeRunId,
+      updatedAt: thread.updatedAt,
+    })),
+  );
+}
+
 async function hydrateActiveConversationRuntime(
   reference: ActiveConversationReference,
 ): Promise<void> {
@@ -711,6 +854,52 @@ async function hydrateActiveConversationRuntime(
     nativeOrchestrationResult = recovered.result;
     nativeSourceRunIds = recovered.sourceRunIds;
     nativeAgentPlans = recovered.session.snapshot.agentPlans ?? {};
+    projectPlanningActivities(
+      recovered.session.snapshot.orchestrationPlanningActivities,
+    );
+    for (const [agentId, records] of Object.entries(
+      recovered.session.snapshot.reasoningSummaries ?? {},
+    )) {
+      const worker = recovered.session.plan.workers.find(
+        (candidate) => candidate.workerId === agentId,
+      );
+      const displayName =
+        agentId === "orchestrator"
+          ? tr("编排模型", "Orchestration Model")
+          : worker?.displayName || worker?.role || agentId;
+      for (const record of records) {
+        const text = record.summary.map((part) => part.trim()).filter(Boolean).join("\n\n");
+        if (!text) continue;
+        window.lunaScopeUi?.appendConversationEvent({
+          id: `reasoning-${reference.runId}-${agentId}-${record.itemId}`,
+          type: "reasoning_summary",
+          title: displayName,
+          summary: text,
+          agentId,
+        });
+      }
+    }
+    for (const item of recovered.session.snapshot.activityItems ?? []) {
+      if (item.activityId.startsWith("planning-activity-")) continue;
+      const summary = formatAgentActivity(item);
+      if (!summary) continue;
+      const displayName = item.displayName.trim() || runtimeAgentName(item.workerId, "orchestrator");
+      window.lunaScopeUi?.appendConversationEvent({
+        id: `activity-${reference.runId}-${item.activityId}`,
+        type: "reasoning_summary",
+        title: displayName,
+        summary,
+        agentId: item.agentId,
+      });
+    }
+    for (const decision of recovered.session.snapshot.supervisorDecisions ?? []) {
+      window.lunaScopeUi?.appendConversationEvent({
+        id: `supervisor-${reference.runId}-${decision.decisionId}`,
+        type: "assistant_commentary",
+        title: tr("编排模型", "Orchestration Model"),
+        summary: decision.summary,
+      });
+    }
     await refreshNativeChangeSets(nativeSourceRunIds);
     if (
       generation !== orchestrationHydrationGeneration ||
@@ -736,8 +925,9 @@ function clearActiveOrchestration(): void {
   nativeOrchestrationResult = null;
   nativeChangeSets = [];
   nativeAgentPlans = {};
+  nativePlanningDraft = null;
+  activeModelLifecycles.clear();
   nativeInspector = null;
-  localStorage.removeItem(retrySourceRunStorageKey);
   window.lunaScopeUi?.clearOrchestration();
   renderNativeOrchestration();
 }
@@ -758,22 +948,26 @@ async function deleteConversationById(
     nativeOrchestrationRunning &&
     threadId === activeConversationThreadId
   ) {
-    window.alert(
-      tr(
+    await showNotice({
+      title: tr("暂时无法删除", "Cannot delete yet"),
+      message: tr(
         "运行中的对话暂不能删除。请先停止运行。",
         "A running conversation cannot be deleted. Stop the run first.",
       ),
-    );
+      confirmLabel: tr("知道了", "Got it"),
+    });
     return;
   }
-  if (
-    !window.confirm(
-      tr(
-        `删除“${title}”？此操作无法撤销。`,
-        `Delete “${title}”? This cannot be undone.`,
-      ),
-    )
-  ) {
+  if (!(await requestConfirmation({
+    title: tr("删除对话", "Delete conversation"),
+    message: tr(
+      `删除“${title}”？此操作无法撤销。`,
+      `Delete “${title}”? This cannot be undone.`,
+    ),
+    confirmLabel: tr("删除", "Delete"),
+    cancelLabel: tr("取消", "Cancel"),
+    danger: true,
+  }))) {
     return;
   }
   if (isTauri()) {
@@ -876,6 +1070,10 @@ function renderNativeRunControls(): void {
   let controls = permissions.querySelector<HTMLElement>("#nativeRunControls");
   if (!nativeOrchestrationRunning) {
     controls?.remove();
+    send.hidden = false;
+    send.disabled = false;
+    input.disabled = false;
+    input.removeAttribute("aria-busy");
     send.textContent = tr("发送", "Send");
     input.placeholder = tr(
       "告诉 LunaScope 下一步要做什么，输入 / 查看功能…",
@@ -889,12 +1087,34 @@ function renderNativeRunControls(): void {
     controls.className = "native-run-controls";
     send.before(controls);
   }
-  controls.innerHTML = `<button class="ghost-btn" type="button" data-native-run-control="pause">${escapeHtml(nativeOrchestrationPaused ? tr("继续", "Resume") : tr("暂停", "Pause"))}</button><button class="text-btn" type="button" data-native-run-control="cancel">${escapeHtml(tr("取消", "Cancel"))}</button>`;
-  send.textContent = tr("引导", "Guide");
-  input.placeholder = tr(
-    "输入引导；发送后编排模型会重新规划剩余链路…",
-    "Send guidance to replan the remaining execution path…",
+  const criticalPhase = ["planning", "guiding", "pausing", "cancelling"].includes(
+    nativeRunPhase,
   );
+  const canPause = !["guiding", "pausing", "cancelling"].includes(nativeRunPhase);
+  const cancelling = nativeRunPhase === "cancelling";
+  controls.innerHTML = `<button class="ghost-btn" type="button" data-native-run-control="pause" ${canPause ? "" : "disabled"}>${escapeHtml(nativeOrchestrationPaused ? tr("继续", "Resume") : tr("暂停", "Pause"))}</button><button class="text-btn" type="button" data-native-run-control="cancel" ${cancelling ? "disabled" : ""}>${escapeHtml(cancelling ? tr("正在取消", "Cancelling") : tr("取消", "Cancel"))}</button>`;
+  const canGuide = nativeRunPhase === "running";
+  send.hidden = !canGuide;
+  send.textContent = tr("引导", "Guide");
+  send.disabled = !canGuide;
+  input.disabled = !canGuide;
+  input.toggleAttribute("aria-busy", criticalPhase);
+  input.placeholder =
+    nativeRunPhase === "planning"
+      ? tr(
+          "编排模型正在判断单 Agent 或多 Agent；决策稳定后可发送引导…",
+          "The Orchestration Model is choosing single or multi Agent. Guidance unlocks after the decision settles…",
+        )
+      : nativeRunPhase === "guiding"
+        ? tr("正在应用引导并重排剩余链路…", "Applying guidance and revising the remaining path…")
+        : nativeRunPhase === "cancelling"
+          ? tr("正在取消当前运行…", "Cancelling the current run…")
+          : nativeRunPhase === "paused"
+            ? tr("运行已暂停；继续后可以发送引导…", "The run is paused. Resume it before sending guidance…")
+            : tr(
+                "输入引导；发送后编排模型会重新规划剩余链路…",
+                "Send guidance to replan the remaining execution path…",
+              );
 }
 
 async function setNativeRunPaused(paused: boolean): Promise<void> {
@@ -903,7 +1123,9 @@ async function setNativeRunPaused(paused: boolean): Promise<void> {
   });
   if (!changed && !nativeOrchestrationRunning) return;
   nativeOrchestrationPaused = paused;
+  nativeRunPhase = paused ? "paused" : "running";
   renderNativeRunControls();
+  syncGlobalModelLifecycle();
   setExecutionActivity({
     running: true,
     workerId: null,
@@ -1029,15 +1251,18 @@ async function submitConversation(
           : text,
     });
   }
-  window.lunaScopeUi?.appendConversationEvent({
-    id: "orchestration-thinking",
-    type: "assistant_message",
-    title: "LunaScope",
-    summary: tr(
-      "正在由 Orchestration Model 判断是否需要多 Agent，并生成 Worker 图…",
-      "The Orchestration Model is deciding whether multiple Agents are useful and drafting the Worker graph…",
-    ),
+  activeModelLifecycles.clear();
+  nativeOrchestrationRunning = true;
+  nativeOrchestrationPaused = false;
+  nativeRunPhase = "planning";
+  renderNativeRunControls();
+  window.lunaScopeUi?.setGlobalThinkingState({
+    mode: "waiting",
+    title: tr("编排模型", "Orchestration Model"),
+    detail: tr("正在编排任务…", "Planning…"),
   });
+  // Waiting is a lifecycle state, not a reasoning item. The first reasoning
+  // card must come from the Provider or from a model-authored progress call.
   if (!isTauri()) {
     throw new Error("Browser preview cannot call the native Orchestrator.");
   }
@@ -1046,8 +1271,9 @@ async function submitConversation(
   }
   nativeAgentPlans = {};
   const planningRunId = activeConversationRunId ?? `planning-${Date.now()}`;
-  nativeOrchestrationSession =
-    await invokeWithAllowOnce<OrchestrationSession>(
+  try {
+    nativeOrchestrationSession =
+      await invokeWithAllowOnce<OrchestrationSession>(
       "draft_native_orchestration",
       {
         objective: text,
@@ -1063,8 +1289,20 @@ async function submitConversation(
         "允许 Orchestration Model 使用已配置的 Provider 凭据分析本次对话吗？这可能产生少量 API 费用。",
         "Allow the Orchestration Model to use the configured Provider credential for this conversation? This may incur a small API charge.",
       ),
-    );
+      );
+  } catch (error) {
+    nativeOrchestrationRunning = false;
+    nativeRunPhase = "idle";
+    activeModelLifecycles.clear();
+    syncGlobalModelLifecycle();
+    renderNativeRunControls();
+    throw error;
+  }
   nativeProjectionPlan = nativeOrchestrationSession.plan;
+  projectPlanningActivities(
+    nativeOrchestrationSession.snapshot.orchestrationPlanningActivities,
+  );
+  nativePlanningDraft = null;
   pendingAttachments = [];
   renderPendingAttachments();
   nativeOrchestrationResult = null;
@@ -1103,6 +1341,9 @@ async function submitLiveGuidance(guidance: string): Promise<void> {
   if (!runId || !activeConversationThreadId) {
     throw new Error("There is no active run to guide.");
   }
+  nativeRunPhase = "guiding";
+  renderNativeRunControls();
+  syncGlobalModelLifecycle();
   const messageId = `message-${crypto.randomUUID()}`;
   window.lunaScopeUi?.appendConversationEvent({
     id: messageId,
@@ -1130,6 +1371,9 @@ async function submitLiveGuidance(guidance: string): Promise<void> {
       },
     );
   } catch (error) {
+    nativeRunPhase = nativeOrchestrationPaused ? "paused" : "running";
+    renderNativeRunControls();
+    syncGlobalModelLifecycle();
     if (errorMessage(error).includes("no orchestration is currently active")) {
       nativeOrchestrationRunning = false;
       nativeOrchestrationPaused = false;
@@ -1148,6 +1392,9 @@ async function submitLiveGuidance(guidance: string): Promise<void> {
     }
     throw error;
   }
+  nativeRunPhase = nativeOrchestrationPaused ? "paused" : "running";
+  renderNativeRunControls();
+  syncGlobalModelLifecycle();
   window.lunaScopeUi?.appendConversationEvent({
     id: `live-guidance-${runId}`,
     type: "assistant_commentary",
@@ -1156,24 +1403,216 @@ async function submitLiveGuidance(guidance: string): Promise<void> {
   });
 }
 
+function runtimeAgentName(workerId: string | null, role: string): string {
+  if (!workerId) {
+    if (role === "supervisor") return tr("编排监督器", "Orchestration Supervisor");
+    if (role === "context_compressor") return tr("上下文压缩器", "Context Compressor");
+    return tr("编排模型", "Orchestration Model");
+  }
+  const worker = (nativeProjectionPlan ?? nativeOrchestrationSession?.plan)?.workers.find(
+    (candidate) => candidate.workerId === workerId,
+  );
+  return worker?.displayName?.trim() || orchestrationRoleLabel(worker?.role ?? role);
+}
+
+function syncGlobalModelLifecycle(): void {
+  if (
+    !nativeOrchestrationRunning ||
+    ["idle", "pausing", "paused", "cancelling"].includes(nativeRunPhase)
+  ) {
+    window.lunaScopeUi?.setGlobalThinkingState(null);
+    return;
+  }
+  const calls = [...activeModelLifecycles.values()];
+  if (!calls.length) {
+    if (nativeRunPhase === "planning") {
+      window.lunaScopeUi?.setGlobalThinkingState({
+        mode: "waiting",
+        title: tr("编排模型正在构建工作图", "Orchestration Model is building the work graph"),
+        detail: tr(
+          "正在形成验收条件、细粒度任务和可并行关系。",
+          "Forming acceptance criteria, granular tasks, and safe parallel groups.",
+        ),
+      });
+    } else if (nativeRunPhase === "guiding") {
+      window.lunaScopeUi?.setGlobalThinkingState({
+        mode: "waiting",
+        title: tr("编排模型正在重新规划", "Orchestration Model is replanning"),
+        detail: tr(
+          "正在评估引导对未完成节点、依赖和并行组的影响。",
+          "Evaluating the guidance impact on unfinished nodes, dependencies, and parallel groups.",
+        ),
+      });
+    } else {
+      window.lunaScopeUi?.setGlobalThinkingState(null);
+    }
+    return;
+  }
+  const streaming = calls.some((call) => call.phase === "streaming");
+  const names = [...new Set(calls.map((call) => call.displayName))];
+  window.lunaScopeUi?.setGlobalThinkingState({
+    mode: streaming ? "streaming" : "waiting",
+    title: streaming
+      ? tr("模型正在返回内容", "Models are returning content")
+      : tr("模型正在思考", "Models are thinking"),
+    detail: streaming
+      ? tr(
+          `${names.join("、")} 正在流式生成结果。`,
+          `${names.join(", ")} ${names.length === 1 ? "is" : "are"} streaming a response.`,
+        )
+      : tr(
+          `${names.join("、")} 正在等待模型响应。`,
+          `${names.join(", ")} ${names.length === 1 ? "is" : "are"} waiting for a model response.`,
+        ),
+  });
+}
+
+function renderModelLifecycleProgress(
+  displayRunId: string,
+  event: OrchestrationProgress,
+): void {
+  const itemId = event.itemId ?? `${event.workerId ?? "orchestrator"}-model`;
+  const key = `${displayRunId}:${event.workerId ?? "orchestrator"}:${itemId}`;
+  const displayName = runtimeAgentName(event.workerId, event.role);
+  if (event.itemPhase === "completed" || event.itemPhase === "failed") {
+    activeModelLifecycles.delete(key);
+    window.lunaScopeUi?.removeConversationEvent(`agent-model-${key}`);
+  } else {
+    const phase = event.itemPhase === "responding" ? "streaming" : "waiting";
+    activeModelLifecycles.set(key, { workerId: event.workerId, displayName, phase });
+    window.lunaScopeUi?.appendConversationEvent({
+      id: `agent-model-${key}`,
+      type: phase === "streaming" ? "agent_streaming" : "agent_waiting",
+      title: displayName,
+      summary:
+        phase === "streaming"
+          ? tr("正在生成", "Generating")
+          : tr("等待响应", "Waiting"),
+      trackHistory: false,
+      openOrchestration: true,
+    });
+  }
+  syncGlobalModelLifecycle();
+}
+
+function planningStageTitle(
+  stage: OrchestrationPlanningActivity["stage"],
+): [string, string] {
+  const stageTitle: Record<OrchestrationPlanningActivity["stage"], [string, string]> = {
+    evaluating_delegation: ["判断单 Agent 或多 Agent", "Choosing single or multi Agent"],
+    extracting_acceptance_criteria: ["提取验收条件", "Extracting acceptance criteria"],
+    decomposing_work: ["拆分细粒度任务", "Decomposing granular work"],
+    auditing_write_scopes: ["检查写入冲突", "Auditing write conflicts"],
+    scheduling_parallelism: ["计算并行关系", "Scheduling parallel work"],
+    reviewing_plan: ["审查编排质量", "Reviewing orchestration quality"],
+    committing_graph: ["提交正式编排图", "Committing the orchestration graph"],
+    replanning_guidance: ["根据引导重新规划", "Replanning from guidance"],
+  };
+  return stageTitle[stage] ?? ["编排规划", "Orchestration planning"];
+}
+
+function formatAgentActivity(
+  item: RuntimeSnapshot["activityItems"][number],
+): string {
+  return [...new Set([
+    item.observation.trim(),
+    item.decision.trim(),
+    item.nextAction.trim(),
+  ].filter(Boolean))].join("\n\n");
+}
+
+function projectPlanningActivity(
+  draft: OrchestrationPlanningActivity,
+  updateRuntime = true,
+): void {
+  nativePlanningDraft = draft;
+  const title = planningStageTitle(draft.stage);
+  window.lunaScopeUi?.appendConversationEvent({
+    id: `planning-draft-${draft.activityId}`,
+    type: "orchestration_planning",
+    title: tr(`编排模型 · ${title[0]}`, `Orchestration Model · ${title[1]}`),
+    summary: draft.summary,
+    agentId: "orchestrator",
+    openOrchestration: true,
+  });
+  if (updateRuntime) {
+    setExecutionActivity({
+      running: true,
+      workerId: null,
+      role: tr("编排模型", "Orchestration Model"),
+      state: tr("正在构建编排图", "Building orchestration graph"),
+      detail: draft.summary,
+    });
+    renderNativeOrchestration();
+  }
+}
+
+function projectPlanningActivities(
+  activities: OrchestrationPlanningActivity[] | undefined,
+): void {
+  for (const activity of activities ?? []) {
+    if (
+      activity.activityId.startsWith("planning-stage-") ||
+      activity.activityId.startsWith("delegation-draft-")
+    ) {
+      continue;
+    }
+    projectPlanningActivity(activity, false);
+  }
+}
+
+function renderPlanningDraftProgress(event: OrchestrationProgress): void {
+  try {
+    projectPlanningActivity(
+      JSON.parse(event.detail) as OrchestrationPlanningActivity,
+    );
+  } catch {
+    return;
+  }
+}
+
 function createOrchestrationProgressChannel(
   displayRunId: string,
 ): Channel<OrchestrationProgress> {
   const channel = new Channel<OrchestrationProgress>();
   channel.onmessage = (event) => {
-    if (event.plan && nativeOrchestrationSession) {
+    if (
+      event.plan &&
+      nativeOrchestrationSession &&
+      event.plan.version >= nativeOrchestrationSession.plan.version
+    ) {
+      const previousPlan = nativeOrchestrationSession.plan;
+      const previousWorkers = nativeOrchestrationSession.snapshot.workers;
+      const structureChanged =
+        previousPlan.version !== event.plan.version ||
+        previousPlan.workers.length !== event.plan.workers.length ||
+        previousPlan.workers.some(
+          (worker, index) =>
+            event.plan?.workers[index]?.workerId !== worker.workerId,
+        );
       nativeOrchestrationSession.plan = event.plan;
       nativeProjectionPlan = event.plan;
       nativeOrchestrationSession.snapshot.workers = Object.fromEntries(
-        event.plan.workers.map((worker) => [worker.workerId, "queued"]),
+        event.plan.workers.map((worker) => [
+          worker.workerId,
+          previousWorkers[worker.workerId] ?? "queued",
+        ]),
       );
-      renderNativeOrchestration();
+      if (structureChanged) renderNativeOrchestration();
     }
     const agentKey = event.workerId ?? "orchestrator";
     if (event.state === "plan_update" && event.agentPlan) {
       nativeAgentPlans[agentKey] = event.agentPlan;
       persistActiveOrchestrationState();
       renderNativeOrchestration();
+      return;
+    }
+    if (event.state === "model_lifecycle") {
+      renderModelLifecycleProgress(displayRunId, event);
+      return;
+    }
+    if (event.state === "planning_draft") {
+      renderPlanningDraftProgress(event);
       return;
     }
     if (event.state === "reasoning_summary") {
@@ -1188,11 +1627,15 @@ function createOrchestrationProgressChannel(
       renderToolActivityProgress(displayRunId, event);
       return;
     }
+    if (event.state === "provider_retry") {
+      renderProviderRetryProgress(displayRunId, event);
+      return;
+    }
     if (event.workerId && nativeOrchestrationSession) {
       nativeOrchestrationSession.snapshot.workers[event.workerId] =
         event.state as RuntimeSnapshot["workers"][string];
     }
-    const role = orchestrationRoleLabel(event.role);
+    const role = runtimeAgentName(event.workerId, event.role);
     const state = orchestrationStateLabel(event.state);
     const detail = orchestrationProgressDetail(event);
     window.lunaScopeUi?.appendConversationEvent({
@@ -1215,6 +1658,41 @@ function createOrchestrationProgressChannel(
   return channel;
 }
 
+function renderProviderRetryProgress(
+  displayRunId: string,
+  event: OrchestrationProgress,
+): void {
+  let retry: { attempt?: number; maximumRetries?: number; delaySeconds?: number; reason?: string } = {};
+  try {
+    retry = JSON.parse(event.detail) as typeof retry;
+  } catch {
+    retry.reason = event.detail;
+  }
+  const role = runtimeAgentName(event.workerId, event.role);
+  const attempt = retry.attempt ?? 1;
+  const maximum = retry.maximumRetries ?? 5;
+  const delay = retry.delaySeconds ?? 0;
+  const reason = retry.reason?.trim() || tr("可恢复的网络错误", "recoverable transport error");
+  window.lunaScopeUi?.appendConversationEvent({
+    id: `provider-retry-${displayRunId}-${event.workerId ?? "orchestrator"}-${event.itemId ?? "request"}`,
+    type: "transport_retry",
+    title: tr(`${role} · 正在恢复连接`, `${role} · Recovering connection`),
+    summary: tr(
+      `模型请求遇到可恢复错误，将在 ${delay} 秒后进行第 ${attempt}/${maximum} 次重试。\n\n${reason}`,
+      `The model request hit a recoverable error. Retry ${attempt}/${maximum} starts in ${delay} seconds.\n\n${reason}`,
+    ),
+    agentId: event.workerId ?? "orchestrator",
+    trackHistory: true,
+  });
+  setExecutionActivity({
+    running: true,
+    workerId: event.workerId,
+    role,
+    state: tr("等待网络重试", "Waiting to retry"),
+    detail: tr(`${delay} 秒后重试`, `Retrying in ${delay} seconds`),
+  });
+}
+
 function renderModelCommentaryProgress(
   displayRunId: string,
   event: OrchestrationProgress,
@@ -1231,14 +1709,13 @@ function renderModelCommentaryProgress(
         : previous;
   runtimeReasoningText.set(key, text);
   if (!text.trim()) return;
-  const role = event.workerId
-    ? orchestrationRoleLabel(event.role)
-    : tr("主 Agent", "Lead Agent");
+  const role = runtimeAgentName(event.workerId, event.role);
   window.lunaScopeUi?.appendConversationEvent({
     id: `commentary-${key}`,
-    type: "assistant_commentary",
-    title: tr(`${role} · 思考与下一步`, `${role} · Analysis and next action`),
+    type: "reasoning_summary",
+    title: role,
     summary: text,
+    agentId: event.workerId ?? "orchestrator",
     openOrchestration: false,
   });
   setExecutionActivity({
@@ -1256,9 +1733,7 @@ function renderToolActivityProgress(
 ): void {
   const itemId =
     event.itemId ?? `${event.workerId ?? "orchestrator"}-${event.tool ?? "tool"}`;
-  const role = event.workerId
-    ? orchestrationRoleLabel(event.role)
-    : tr("主 Agent", "Lead Agent");
+  const role = runtimeAgentName(event.workerId, event.role);
   const failed = event.itemPhase === "failed";
   const completed = event.itemPhase === "completed";
   window.lunaScopeUi?.appendConversationEvent({
@@ -1298,17 +1773,14 @@ function renderReasoningSummaryProgress(
         : previous;
   runtimeReasoningText.set(key, text);
   if (!text.trim()) return;
-  const role = event.workerId
-    ? orchestrationRoleLabel(event.role)
-    : tr("主 Agent", "Lead Agent");
+  const role = runtimeAgentName(event.workerId, event.role);
   const providerSummary = event.summarySource === "provider";
   window.lunaScopeUi?.appendConversationEvent({
     id: `reasoning-${key}`,
     type: "reasoning_summary",
-    title: providerSummary
-      ? tr(`${role} · 推理摘要`, `${role} · Reasoning summary`)
-      : tr(`${role} · 行动说明`, `${role} · Action update`),
+    title: role,
     summary: text,
+    agentId: event.workerId ?? "orchestrator",
     openOrchestration: false,
   });
   setExecutionActivity({
@@ -1334,6 +1806,7 @@ function updateNativeOrchestrationProgress(event: OrchestrationProgress): void {
     "repair_planning",
     "replanning",
     "context_compaction",
+    "awaiting_reasoning_summary",
   ].includes(event.state);
   const selector = `[data-native-worker-id="${CSS.escape(event.workerId)}"]`;
   document.querySelectorAll<HTMLElement>(selector).forEach((node) => {
@@ -1371,8 +1844,15 @@ function localizedModelProse(
   englishFallback = "",
 ): string {
   const text = value.trim();
-  if (userPreferences.language === "english") {
-    return text || englishFallback || chineseFallback;
+  const replyLanguage =
+    userPreferences.modelReplyLanguage === "follow_ui"
+      ? userPreferences.language
+      : userPreferences.modelReplyLanguage;
+  if (replyLanguage === "english") {
+    if (!text) return englishFallback || chineseFallback;
+    return /[\u3400-\u9fff]/u.test(text)
+      ? englishFallback || "The model response was normalized to English."
+      : text;
   }
   return /[\u3400-\u9fff]/u.test(text) ? text : chineseFallback;
 }
@@ -1392,11 +1872,18 @@ function orchestrationStateLabel(state: string): string {
     failed: ["执行失败", "Failed"],
     cancelled: ["已取消", "Cancelled"],
     paused: ["已暂停", "Paused"],
+    planning: ["正在规划", "Planning"],
+    guidance_queued: ["引导已排队", "Guidance queued"],
+    replanning: ["正在重新规划", "Replanning"],
+    replanned: ["已重新规划", "Replanned"],
+    monitoring: ["正在监督", "Monitoring"],
+    awaiting_reasoning_summary: ["继续处理", "Working"],
+    cancelling: ["正在取消", "Cancelling"],
   };
   const label = labels[state.toLowerCase()];
   return label
     ? tr(label[0], label[1])
-    : state.replaceAll("_", " ").toUpperCase();
+    : tr("未知状态", state.replaceAll("_", " ").toUpperCase());
 }
 
 function orchestrationToolLabel(tool: string): string {
@@ -1503,6 +1990,13 @@ function failedWorkerIds(result: OrchestrationRunResult | null): string[] {
     .map((worker) => worker.workerId);
 }
 
+function runWasCancelled(result: OrchestrationRunResult | null): boolean {
+  if (!result) return false;
+  return Object.values(result.workers).some(
+    (worker) => worker.state === "cancelled" && worker.errorCode === "cancelled",
+  );
+}
+
 async function automaticallyRetryFailedAgents(
   workspaceRoot: string,
   displayRunId: string,
@@ -1538,7 +2032,6 @@ async function automaticallyRetryFailedAgents(
         },
       );
       nativeRetrySourceRunId = outcome.runId;
-      localStorage.setItem(retrySourceRunStorageKey, outcome.runId);
       nativeSourceRunIds = [
         ...new Set([...nativeSourceRunIds, outcome.runId]),
       ];
@@ -1635,7 +2128,7 @@ async function refreshNativeChangeSets(runIds: string[]): Promise<void> {
 
 async function executeNativeOrchestration(): Promise<void> {
   const session = nativeOrchestrationSession;
-  if (!session || nativeOrchestrationRunning) return;
+  if (!session || nativeOrchestrationExecuting) return;
   const workspaceRoot = syncActiveWorkspace();
   if (!workspaceRoot) {
     throw new Error(
@@ -1645,9 +2138,12 @@ async function executeNativeOrchestration(): Promise<void> {
       ),
     );
   }
+  nativeOrchestrationExecuting = true;
   nativeOrchestrationRunning = true;
   nativeOrchestrationPaused = false;
+  nativeRunPhase = "running";
   renderNativeRunControls();
+  syncGlobalModelLifecycle();
   renderNativeOrchestration();
   window.lunaScopeUi?.appendConversationEvent({
     id: `orchestration-run-${session.runId}`,
@@ -1713,7 +2209,12 @@ async function executeNativeOrchestration(): Promise<void> {
           `允许 ${session.plan.workers.length} 个 Agent 在隔离工作区中读取、修改文件并运行验证，然后把通过检查的改动写回项目吗？`,
           `Allow ${session.plan.workers.length} Agent(s) to read and edit files in isolated workspaces, run verification, and apply validated changes back to the project?`,
         );
-        if (!window.confirm(`${confirmation}\n\n${message}`)) {
+        if (!(await requestConfirmation({
+          title: tr("需要本次授权", "Permission required"),
+          message: `${confirmation}\n\n${message}`,
+          confirmLabel: tr("允许本次", "Allow once"),
+          cancelLabel: tr("取消", "Cancel"),
+        }))) {
           throw new Error("用户未授予本次操作权限");
         }
         const outcome = await invokeRun(
@@ -1728,11 +2229,10 @@ async function executeNativeOrchestration(): Promise<void> {
       }
     }
     nativeRetrySourceRunId = nativeOrchestrationSession?.runId ?? session.runId;
-    localStorage.setItem(retrySourceRunStorageKey, nativeRetrySourceRunId);
-    const automaticRecovery = await automaticallyRetryFailedAgents(
-      workspaceRoot,
-      session.runId,
-    );
+    const cancelled = runWasCancelled(nativeOrchestrationResult);
+    const automaticRecovery = cancelled
+      ? { cycles: 0, lastError: null }
+      : await automaticallyRetryFailedAgents(workspaceRoot, session.runId);
     autonomousRepairCycles += automaticRecovery.cycles;
     await refreshNativeChangeSets(nativeSourceRunIds);
     renderNativeOrchestrationResult();
@@ -1740,7 +2240,19 @@ async function executeNativeOrchestration(): Promise<void> {
     const fatalVerification = verificationHasFatalDefects(
       nativeOrchestrationResult,
     );
-    if (failed.length > 0 || fatalVerification) {
+    if (cancelled) {
+      window.lunaScopeUi?.appendConversationEvent({
+        id: `assistant-${nativeRetrySourceRunId ?? session.runId}`,
+        type: "assistant_message",
+        title: "LunaScope",
+        summary: tr(
+          "任务已按用户请求取消。已完成的文件、交付物和对话上下文均已保留；未启动验证、自动修复或重试。",
+          "The task was cancelled by the user. Completed files, artifacts, and conversation context were preserved; verification, automatic repair, and retries were not started.",
+        ),
+        openOrchestration: true,
+      });
+      window.setTimeout(clearCompletedOrchestrationGraph, 0);
+    } else if (failed.length > 0 || fatalVerification) {
       window.lunaScopeUi?.appendConversationEvent({
         id: `assistant-${nativeRetrySourceRunId ?? session.runId}`,
         type: "assistant_message",
@@ -1768,6 +2280,9 @@ async function executeNativeOrchestration(): Promise<void> {
       window.setTimeout(clearCompletedOrchestrationGraph, 0);
     }
   } catch (error) {
+    if (isTauri()) {
+      await invoke<boolean>("cancel_native_orchestration").catch(() => false);
+    }
     window.lunaScopeUi?.appendConversationEvent({
       id: `orchestration-run-${session.runId}`,
       type: "assistant_message",
@@ -1777,9 +2292,13 @@ async function executeNativeOrchestration(): Promise<void> {
       retryConversation: false,
     });
   } finally {
+    nativeOrchestrationExecuting = false;
     nativeOrchestrationRunning = false;
     nativeOrchestrationPaused = false;
+    nativeRunPhase = "idle";
+    activeModelLifecycles.clear();
     renderNativeRunControls();
+    syncGlobalModelLifecycle();
     setExecutionActivity({
       running: false,
       workerId: null,
@@ -1808,9 +2327,12 @@ async function retryFailedAgents(sourceRunIdOverride?: string): Promise<void> {
     );
   }
 
+  activeModelLifecycles.clear();
   nativeOrchestrationRunning = true;
   nativeOrchestrationPaused = false;
+  nativeRunPhase = "running";
   renderNativeRunControls();
+  syncGlobalModelLifecycle();
   renderNativeOrchestration();
   window.lunaScopeUi?.appendConversationEvent({
     id: `orchestration-run-${session?.runId ?? sourceRunId}`,
@@ -1836,7 +2358,6 @@ async function retryFailedAgents(sourceRunIdOverride?: string): Promise<void> {
       },
     );
     nativeRetrySourceRunId = outcome.runId;
-    localStorage.setItem(retrySourceRunStorageKey, outcome.runId);
     nativeSourceRunIds = [...new Set([...nativeSourceRunIds, outcome.runId])];
     nativeOrchestrationResult = previous
       ? mergeRetryResult(previous, outcome.result)
@@ -1888,7 +2409,10 @@ async function retryFailedAgents(sourceRunIdOverride?: string): Promise<void> {
   } finally {
     nativeOrchestrationRunning = false;
     nativeOrchestrationPaused = false;
+    nativeRunPhase = "idle";
+    activeModelLifecycles.clear();
     renderNativeRunControls();
+    syncGlobalModelLifecycle();
     setExecutionActivity({
       running: false,
       workerId: null,
@@ -1902,7 +2426,11 @@ async function retryFailedAgents(sourceRunIdOverride?: string): Promise<void> {
 function showSlashMenu(): void {
   const box = document.querySelector<HTMLElement>("#composer .composer-box");
   if (!box) return;
-  box.querySelector("#nativeSlashMenu")?.remove();
+  closeSlashMenu();
+  document.body.insertAdjacentHTML(
+    "beforeend",
+    '<button class="slash-menu-backdrop" id="nativeSlashMenuBackdrop" type="button" aria-label="Close command menu"></button>',
+  );
   box.insertAdjacentHTML(
     "afterbegin",
     `<div class="slash-menu" id="nativeSlashMenu">
@@ -1922,9 +2450,14 @@ function showSlashMenu(): void {
   );
 }
 
+function closeSlashMenu(): void {
+  document.querySelector("#nativeSlashMenu")?.remove();
+  document.querySelector("#nativeSlashMenuBackdrop")?.remove();
+}
+
 function handleSlashCommand(command: string): boolean {
   const normalized = command.trim().toLowerCase();
-  document.querySelector("#nativeSlashMenu")?.remove();
+  closeSlashMenu();
   if (normalized === "/ultranote") {
     return false;
   }
@@ -1965,14 +2498,14 @@ async function handleProjectAction(
   }
   if (action === "slash-command") {
     const command = button.dataset.command ?? "";
-    if (!handleSlashCommand(command)) {
-      const input =
-        document.querySelector<HTMLTextAreaElement>("#composerInput");
-      if (input) {
-        input.value = command;
-        input.focus();
-      }
+    const input =
+      document.querySelector<HTMLTextAreaElement>("#composerInput");
+    if (input) {
+      input.value = command;
+      input.focus();
+      input.setSelectionRange(command.length, command.length);
     }
+    closeSlashMenu();
     return true;
   }
   if (action === "project-close") {
@@ -2027,22 +2560,26 @@ async function handleProjectAction(
     const project = projects.find((item) => item.projectId === projectId);
     if (!project) return true;
     if (nativeOrchestrationRunning && projectId === activeProjectId) {
-      window.alert(
-        tr(
+      await showNotice({
+        title: tr("暂时无法删除", "Cannot delete yet"),
+        message: tr(
           "运行中的项目暂不能删除。请先停止运行。",
           "A project with an active run cannot be deleted. Stop the run first.",
         ),
-      );
+        confirmLabel: tr("知道了", "Got it"),
+      });
       return true;
     }
-    if (
-      !window.confirm(
-        tr(
-          `删除项目“${project.name}”及其对话记录？不会删除项目文件夹中的本地文件。此操作无法撤销。`,
-          `Delete project “${project.name}” and its conversations? Local files inside the project folders will not be deleted. This cannot be undone.`,
-        ),
-      )
-    ) {
+    if (!(await requestConfirmation({
+      title: tr("删除项目", "Delete project"),
+      message: tr(
+        `删除项目“${project.name}”及其对话记录？不会删除项目文件夹中的本地文件。此操作无法撤销。`,
+        `Delete project “${project.name}” and its conversations? Local files inside the project folders will not be deleted. This cannot be undone.`,
+      ),
+      confirmLabel: tr("删除项目", "Delete project"),
+      cancelLabel: tr("取消", "Cancel"),
+      danger: true,
+    }))) {
       return true;
     }
     try {
@@ -2331,17 +2868,17 @@ function ultraNoteWorkspaceMarkup(workspace: UltraNoteWorkspace): string {
   const syllabusPanel = syllabus
     ? `
       <section class="provider-card ultranote-syllabus-summary">
-        <header><div><strong>Syllabus revision ${syllabus.revision}</strong><small>${syllabus.structure.learningObjectives.length} objectives · ${syllabus.structure.topicSchedule.length} schedule entries · ${syllabus.ambiguities.length} unresolved</small></div><span class="status ${syllabus.confirmed ? "complete" : "waiting"}">${syllabus.confirmed ? "CONFIRMED" : "REVIEW"}</span></header>
+        <header><div><strong>${tr("课程大纲修订", "Syllabus revision")} ${syllabus.revision}</strong><small>${syllabus.structure.learningObjectives.length} ${tr("项目标", "objectives")} · ${syllabus.structure.topicSchedule.length} ${tr("项课程安排", "schedule entries")} · ${syllabus.ambiguities.length} ${tr("项待确认", "unresolved")}</small></div><span class="status ${syllabus.confirmed ? "complete" : "waiting"}">${syllabus.confirmed ? tr("已确认", "CONFIRMED") : tr("待审阅", "REVIEW")}</span></header>
         ${
           syllabus.ambiguities.length
-            ? `<div class="ultranote-alert"><strong>Do not guess</strong>${syllabus.ambiguities.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>`
+            ? `<div class="ultranote-alert"><strong>${tr("不要猜测", "Do not guess")}</strong>${syllabus.ambiguities.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>`
             : ""
         }
-        <div class="ultranote-plan"><div><strong>15–30 min pre-study</strong>${syllabus.prestudyPlan.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div><div><strong>First phase</strong>${syllabus.firstPhasePlan.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div>
+        <div class="ultranote-plan"><div><strong>${tr("15–30 分钟预习", "15–30 min pre-study")}</strong>${syllabus.prestudyPlan.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div><div><strong>${tr("第一阶段", "First phase")}</strong>${syllabus.firstPhasePlan.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div></div>
       </section>`
     : `
       <section class="provider-card ultranote-syllabus-summary">
-        <header><div><strong>Syllabus requested</strong><small>Paste the syllabus below, or continue in Limited Mode. Exams, deadlines, and AI policy remain unknown until confirmed.</small></div><span class="status waiting">LIMITED</span></header>
+        <header><div><strong>${tr("需要课程大纲", "Syllabus requested")}</strong><small>${tr("请在下方粘贴课程大纲，也可继续使用受限模式；考试、截止日期和 AI 政策在确认前保持未知。", "Paste the syllabus below, or continue in Limited Mode. Exams, deadlines, and AI policy remain unknown until confirmed.")}</small></div><span class="status waiting">${tr("受限", "LIMITED")}</span></header>
       </section>`;
   const noteRows = workspace.latestNotes.length
     ? workspace.latestNotes
@@ -2349,59 +2886,59 @@ function ultraNoteWorkspaceMarkup(workspace: UltraNoteWorkspace): string {
         .map(
           (note) => `
             <article class="ultranote-note-row">
-              <div><strong>${escapeHtml(note.title)}</strong><span>Revision ${note.revision} · ${note.sections.length} uniform sections · ${note.sourceMap.length} citation anchors</span></div>
+              <div><strong>${escapeHtml(note.title)}</strong><span>${tr("修订", "Revision")} ${note.revision} · ${note.sections.length} ${tr("个统一章节", "uniform sections")} · ${note.sourceMap.length} ${tr("个引用锚点", "citation anchors")}</span></div>
               <div class="native-worker-tags">${[...new Set(note.sections.map((section) => section.provenance))].map((item) => `<span class="native-worker-tag">${escapeHtml(item)}</span>`).join("")}</div>
             </article>`,
         )
         .join("")
-    : '<p class="ultranote-empty">No lecture notes yet. Import the first lecture source below.</p>';
+    : `<p class="ultranote-empty">${tr("还没有课堂笔记，请在下方导入第一份课程资料。", "No lecture notes yet. Import the first lecture source below.")}</p>`;
   const policy = ultraNotePolicy
-    ? `<div class="ultranote-policy-result ${ultraNotePolicy.clarificationRequired ? "waiting" : "complete"}"><strong>${ultraNotePolicy.clarificationRequired ? "Clarification required" : "Assistance boundary ready"}</strong><span>Allowed modes: ${escapeHtml(ultraNotePolicy.allowedModes.join(", "))}</span><span>Direct submittable answer: never</span>${ultraNotePolicy.rationale.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>`
+    ? `<div class="ultranote-policy-result ${ultraNotePolicy.clarificationRequired ? "waiting" : "complete"}"><strong>${ultraNotePolicy.clarificationRequired ? tr("需要澄清", "Clarification required") : tr("辅助边界已确定", "Assistance boundary ready")}</strong><span>${tr("允许模式", "Allowed modes")}: ${escapeHtml(ultraNotePolicy.allowedModes.join(", "))}</span><span>${tr("可直接提交的答案：永不提供", "Direct submittable answer: never")}</span>${ultraNotePolicy.rationale.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}</div>`
     : "";
   return `
     <div class="ultranote-grid">
       <div class="ultranote-main">
         ${syllabusPanel}
         <section class="provider-card">
-          <div class="pane-head" style="padding-inline:0"><div><strong>Lecture ingestion</strong><span class="settings-help">Each independent lecture thread produces uniform notes with provenance and a source map.</span></div></div>
+          <div class="pane-head" style="padding-inline:0"><div><strong>${tr("课程资料导入", "Lecture ingestion")}</strong><span class="settings-help">${tr("每个独立课堂对话都会生成带来源标记和来源地图的统一笔记。", "Each independent lecture thread produces uniform notes with provenance and a source map.")}</span></div></div>
           <div class="settings-grid">
-            <div class="field"><label for="ultraLectureKind">Source kind</label><select class="select" id="ultraLectureKind">${sourceKindOptions()}</select></div>
-            <div class="field"><label for="ultraLectureName">Display name</label><input class="input" id="ultraLectureName" placeholder="Week 1 · Processes"></div>
-            <div class="field wide"><label for="ultraLectureContent">Extracted or pasted content</label><textarea class="textarea" id="ultraLectureContent" placeholder="Paste slides, notes, transcript, reading, board-photo OCR, lab material, code, or dataset context…"></textarea></div>
+            <div class="field"><label for="ultraLectureKind">${tr("资料类型", "Source kind")}</label><select class="select" id="ultraLectureKind">${sourceKindOptions()}</select></div>
+            <div class="field"><label for="ultraLectureName">${tr("显示名称", "Display name")}</label><input class="input" id="ultraLectureName" placeholder="${tr("第 1 周 · 进程", "Week 1 · Processes")}"></div>
+            <div class="field wide"><label for="ultraLectureContent">${tr("提取或粘贴的内容", "Extracted or pasted content")}</label><textarea class="textarea" id="ultraLectureContent" placeholder="${tr("粘贴幻灯片、笔记、转录、阅读材料、板书 OCR、实验材料、代码或数据集上下文…", "Paste slides, notes, transcript, reading, board-photo OCR, lab material, code, or dataset context…")}"></textarea></div>
           </div>
-          <button class="primary-btn" type="button" data-native-action="ultranote-ingest-lecture">Generate cited notes</button>
+          <button class="primary-btn" type="button" data-native-action="ultranote-ingest-lecture">${tr("生成带引用的笔记", "Generate cited notes")}</button>
         </section>
         <section class="provider-card">
-          <div class="pane-head" style="padding-inline:0"><div><strong>Lecture notes</strong><span class="settings-help">From class, Agent explanation, Inference, External source, and Unresolved remain visibly distinct.</span></div></div>
+          <div class="pane-head" style="padding-inline:0"><div><strong>${tr("课堂笔记", "Lecture notes")}</strong><span class="settings-help">${tr("课堂原文、Agent 解释、推断、外部来源和未解决项会保持清晰区分。", "Class material, Agent explanation, inference, external sources, and unresolved items remain visibly distinct.")}</span></div></div>
           <div class="ultranote-notes">${noteRows}</div>
         </section>
       </div>
       <aside class="ultranote-rail">
         <section class="provider-card">
-          <strong>Course Memory</strong>
+          <strong>${tr("课程记忆", "Course Memory")}</strong>
           <div class="ultranote-metrics">
-            <span><b>${memory?.objectives.length ?? 0}</b> objectives</span>
-            <span><b>${memory?.concepts.length ?? 0}</b> concepts</span>
-            <span><b>${memory?.assignments.length ?? 0}</b> assignments</span>
-            <span><b>${memory?.reviewItems.length ?? 0}</b> review items</span>
+            <span><b>${memory?.objectives.length ?? 0}</b> ${tr("项目标", "objectives")}</span>
+            <span><b>${memory?.concepts.length ?? 0}</b> ${tr("个概念", "concepts")}</span>
+            <span><b>${memory?.assignments.length ?? 0}</b> ${tr("项作业", "assignments")}</span>
+            <span><b>${memory?.reviewItems.length ?? 0}</b> ${tr("项复习内容", "review items")}</span>
           </div>
-          <small>Scoped to ${escapeHtml(course.courseId)}. Other courses, raw chats, and unrelated tool logs are excluded.</small>
-          <div class="field" style="margin-top:12px"><label for="ultraSearchQuery">Course retrieval</label><div class="row"><input class="input" id="ultraSearchQuery" placeholder="Search imported course sources" style="flex:1"><button class="ghost-btn" type="button" data-native-action="ultranote-search">Search</button></div></div>
+          <small>${tr(`仅限课程 ${course.courseId}；其他课程、原始对话和无关工具日志不会进入检索。`, `Scoped to ${course.courseId}. Other courses, raw chats, and unrelated tool logs are excluded.`)}</small>
+          <div class="field" style="margin-top:12px"><label for="ultraSearchQuery">${tr("课程检索", "Course retrieval")}</label><div class="row"><input class="input" id="ultraSearchQuery" placeholder="${tr("搜索已导入的课程资料", "Search imported course sources")}" style="flex:1"><button class="ghost-btn" type="button" data-native-action="ultranote-search">${tr("搜索", "Search")}</button></div></div>
           <div class="ultranote-search-results">${ultraNoteSearchHits.map((hit) => `<div class="ultranote-search-hit"><strong>${escapeHtml(hit.sourceId)}</strong><span>${escapeHtml(hit.excerpt)}</span></div>`).join("")}</div>
         </section>
         <section class="provider-card">
-          <strong>Syllabus import / revision</strong>
-          <div class="field" style="margin-top:10px"><label for="ultraSyllabusName">Source name</label><input class="input" id="ultraSyllabusName" value="Course syllabus"></div>
-          <div class="field"><label for="ultraSyllabusContent">Syllabus text</label><textarea class="textarea" id="ultraSyllabusContent" placeholder="Paste the current syllabus revision…"></textarea></div>
-          <button class="ghost-btn" type="button" data-native-action="ultranote-ingest-syllabus">${syllabus ? "Add syllabus revision" : "Extract syllabus"}</button>
+          <strong>${tr("课程大纲导入 / 修订", "Syllabus import / revision")}</strong>
+          <div class="field" style="margin-top:10px"><label for="ultraSyllabusName">${tr("来源名称", "Source name")}</label><input class="input" id="ultraSyllabusName" value="${tr("课程大纲", "Course syllabus")}"></div>
+          <div class="field"><label for="ultraSyllabusContent">${tr("课程大纲文本", "Syllabus text")}</label><textarea class="textarea" id="ultraSyllabusContent" placeholder="${tr("粘贴当前课程大纲修订版…", "Paste the current syllabus revision…")}"></textarea></div>
+          <button class="ghost-btn" type="button" data-native-action="ultranote-ingest-syllabus">${syllabus ? tr("添加大纲修订", "Add syllabus revision") : tr("提取课程大纲", "Extract syllabus")}</button>
         </section>
         <section class="provider-card">
-          <strong>Homework integrity guard</strong>
-          <div class="field" style="margin-top:10px"><label for="ultraHomeworkKind">Classification</label><select class="select" id="ultraHomeworkKind">${(["practice", "ungraded", "graded", "exam", "unknown"] as HomeworkKind[]).map((kind) => `<option value="${kind}">${kind}</option>`).join("")}</select></div>
-          <button class="ghost-btn" type="button" data-native-action="ultranote-evaluate-homework">Check assistance boundary</button>
+          <strong>${tr("作业诚信保护", "Homework integrity guard")}</strong>
+          <div class="field" style="margin-top:10px"><label for="ultraHomeworkKind">${tr("分类", "Classification")}</label><select class="select" id="ultraHomeworkKind">${(["practice", "ungraded", "graded", "exam", "unknown"] as HomeworkKind[]).map((kind) => `<option value="${kind}">${escapeHtml(tr(({ practice: "练习", ungraded: "不计分", graded: "计分作业", exam: "考试", unknown: "未知" } as Record<string, string>)[kind] ?? kind, kind))}</option>`).join("")}</select></div>
+          <button class="ghost-btn" type="button" data-native-action="ultranote-evaluate-homework">${tr("检查辅助边界", "Check assistance boundary")}</button>
           ${policy}
         </section>
-        <button class="primary-btn" type="button" data-native-action="ultranote-export">Export course Markdown</button>
+        <button class="primary-btn" type="button" data-native-action="ultranote-export">${tr("导出课程 Markdown", "Export course Markdown")}</button>
       </aside>
     </div>`;
 }
@@ -2417,10 +2954,10 @@ function renderUltraNote(): void {
     <section class="ultranote-shell">
       <header class="ultranote-header">
         <div><span class="ultranote-kicker">${tr("命令触发的学习工作流", "COMMAND-ACTIVATED LEARNING WORKFLOW")}</span><h2>/ultranote${workspace?.course ? ` · ${escapeHtml(workspace.course.title)}` : ""}</h2><p>${tr("基于课程来源的预习、引用笔记、透明复习与符合规则的作业辅助。", "Course-grounded pre-study, cited lecture notes, transparent review, and policy-safe homework support.")}</p></div>
-        <div class="row"><span class="status ${isTauri() ? "complete" : "waiting"}">${isTauri() ? "NATIVE SQLITE" : "PREVIEW"}</span><button class="ghost-btn" type="button" data-native-action="ultranote-refresh">Refresh</button></div>
+        <div class="row"><span class="status ${isTauri() ? "complete" : "waiting"}">${isTauri() ? tr("原生 SQLITE", "NATIVE SQLITE") : tr("预览", "PREVIEW")}</span><button class="ghost-btn" type="button" data-native-action="ultranote-refresh">${tr("刷新", "Refresh")}</button></div>
       </header>
       <div class="settings-status" id="ultraNoteStatus" role="status"></div>
-      ${workspace ? ultraNoteWorkspaceMarkup(workspace) : '<div class="provider-card">Loading UltraNote workspace…</div>'}
+      ${workspace ? ultraNoteWorkspaceMarkup(workspace) : `<div class="provider-card">${tr("正在加载 UltraNote 工作区…", "Loading UltraNote workspace…")}</div>`}
     </section>`;
 }
 
@@ -2791,6 +3328,26 @@ function projectNativeState(snapshot: RuntimeSnapshot): void {
       `NATIVE · ${snapshot.runState.toUpperCase()} · SEQ ${snapshot.sequence}`;
   }
 
+  const activeRunId = nativeOrchestrationSession?.runId;
+  if (activeRunId && snapshot.runId === activeRunId) {
+    const terminal = ["completed", "partially_completed", "failed", "cancelled"].includes(
+      snapshot.runState,
+    );
+    nativeOrchestrationRunning = !terminal;
+    nativeOrchestrationPaused = snapshot.runState === "paused";
+    nativeRunPhase = terminal
+      ? "idle"
+      : snapshot.runState === "planning" || snapshot.runState === "created"
+        ? "planning"
+        : snapshot.runState === "pausing"
+          ? "pausing"
+          : snapshot.runState === "paused"
+            ? "paused"
+            : "running";
+    renderNativeRunControls();
+    syncGlobalModelLifecycle();
+  }
+
   window.dispatchEvent(
     new CustomEvent("lunascope:native-snapshot", { detail: snapshot }),
   );
@@ -2837,11 +3394,11 @@ function generalSettingsMarkup(): string {
     <div class="pane-head" style="padding-inline:0"><div><strong>${tr("通用", "General")}</strong><span class="settings-help">${tr("仅保留影响整个应用的必要设置。", "Only essential application-wide preferences are kept here.")}</span></div></div>
     <div class="setting-row">
       <div><strong>${tr("界面语言", "Interface language")}</strong><span>${tr("切换简体中文或英文。", "Switch between Simplified Chinese and English.")}</span></div>
-      <select class="select" id="uiLanguage" style="max-width:220px"><option value="chinese" ${userPreferences.language === "chinese" ? "selected" : ""}>简体中文</option><option value="english" ${userPreferences.language === "english" ? "selected" : ""}>English</option></select>
+      <select class="select" id="uiLanguage" aria-label="${tr("界面语言", "Interface language")}" style="max-width:220px"><option value="chinese" ${userPreferences.language === "chinese" ? "selected" : ""}>简体中文</option><option value="english" ${userPreferences.language === "english" ? "selected" : ""}>English</option></select>
     </div>
     <div class="setting-row">
       <div><strong>${tr("模型回复语言", "Model reply language")}</strong><span>${tr("独立于界面语言，约束 Orchestrator、Workers 与最终回复。", "Independent from the UI language; constrains the Orchestrator, Workers, and final response.")}</span></div>
-      <select class="select" id="modelReplyLanguage" style="max-width:220px">
+      <select class="select" id="modelReplyLanguage" aria-label="${tr("模型回复语言", "Model reply language")}" style="max-width:220px">
         <option value="follow_ui" ${userPreferences.modelReplyLanguage === "follow_ui" ? "selected" : ""}>${tr("跟随界面", "Follow interface")}</option>
         <option value="chinese" ${userPreferences.modelReplyLanguage === "chinese" ? "selected" : ""}>简体中文</option>
         <option value="english" ${userPreferences.modelReplyLanguage === "english" ? "selected" : ""}>English</option>
@@ -2895,17 +3452,16 @@ function protocolOptions(selected: ProviderProtocol): string {
     .join("");
 }
 
-const workerRoles: Array<[ModelRole, string]> = [
-  ["general_worker", "Default Worker"],
-  ["programming", "Programming"],
-  ["research", "Research"],
-  ["writing", "Writing"],
-  ["frontend", "Frontend"],
-  ["game_development", "Game Development"],
-  ["reviewer", "Reviewer"],
-  ["verifier", "Verifier"],
-  ["fast_cheap", "Fast / Cheap"],
-  ["vision", "Vision"],
+const workerRoles: Array<[ModelRole, string, string]> = [
+  ["general_worker", "默认 Worker", "Default Worker"],
+  ["programming", "编程", "Programming"],
+  ["research", "科研", "Research"],
+  ["writing", "写作", "Writing"],
+  ["frontend", "前端开发", "Frontend"],
+  ["game_development", "游戏开发", "Game Development"],
+  ["reviewer", "审查", "Reviewer"],
+  ["verifier", "验收", "Verifier"],
+  ["fast_cheap", "快速 / 低成本", "Fast / Cheap"],
 ];
 
 function assignmentForRole(role: ModelRole): ModelAssignment | undefined {
@@ -2916,71 +3472,82 @@ function assignmentForRole(role: ModelRole): ModelAssignment | undefined {
 
 function workerPoolMarkup(): string {
   return workerRoles
-    .map(([role, label]) => {
+    .map(([role, chineseLabel, englishLabel]) => {
+      const label = tr(chineseLabel, englishLabel);
       const assignment = assignmentForRole(role);
       return `<div class="model-pool-row" data-worker-model-row="${role}">
         <strong>${label}</strong>
-        <input class="input" data-worker-provider value="${escapeHtml(assignment?.providerConfigId ?? "")}" placeholder="provider config ID" aria-label="${label} provider">
-        <input class="input" data-worker-model value="${escapeHtml(assignment?.modelId ?? "")}" placeholder="model ID" aria-label="${label} model">
-        <select class="select" data-worker-effort aria-label="${label} reasoning effort"><option value="low" ${assignment?.reasoningEffort === "low" ? "selected" : ""}>Low</option><option value="medium" ${!assignment || assignment.reasoningEffort === "medium" ? "selected" : ""}>Medium</option><option value="high" ${assignment?.reasoningEffort === "high" ? "selected" : ""}>High</option></select>
-        <label><input type="checkbox" data-worker-locked ${assignment?.locked ? "checked" : ""}> Lock</label>
+        <input class="input" data-worker-provider value="${escapeHtml(assignment?.providerConfigId ?? "")}" placeholder="${escapeHtml(tr("提供商配置 ID", "provider config ID"))}" aria-label="${label} ${tr("提供商", "provider")}">
+        <input class="input" data-worker-model value="${escapeHtml(assignment?.modelId ?? "")}" placeholder="${escapeHtml(tr("模型 ID", "model ID"))}" aria-label="${label} ${tr("模型", "model")}">
+        <input class="input" data-worker-custom-effort value="${escapeHtml(customReasoningEffortValue(assignment))}" maxlength="32" pattern="[A-Za-z0-9._-]{1,32}" spellcheck="false" placeholder="${escapeHtml(tr("自定义强度；留空为自动", "Custom effort; blank means Auto"))}" aria-label="${label} ${tr("自定义思考强度", "custom reasoning effort")}">
+        <button class="ghost-btn" type="button" data-native-action="test-model-effort" data-model-test-scope="worker">${tr("测试模型", "Test model")}</button>
+        <span class="settings-help" data-model-test-status></span>
+        <label><input type="checkbox" data-worker-locked ${assignment?.locked ? "checked" : ""}> ${tr("锁定", "Lock")}</label>
       </div>`;
     })
     .join("");
 }
 
 function providerSettingsMarkup(): string {
-  return `<div class="pane-head" style="padding-inline:0"><div><strong>Models &amp; Providers</strong><span class="settings-help">多个 Provider 可同时保存和启用；相同 ID 才会更新已有配置。API Key 仅写入 Windows Credential Manager。</span></div><div class="row"><button class="primary-btn" type="button" data-native-action="new-provider">新建 Provider</button><button class="ghost-btn" type="button" data-native-action="refresh-providers">刷新</button></div></div>
+  const vision = modelSelectionSettings.vision;
+  return `<div class="pane-head" style="padding-inline:0"><div><strong>${tr("模型与提供商", "Models &amp; Providers")}</strong><span class="settings-help">${tr("可同时保存并启用多个提供商；只有相同 ID 才会更新已有配置。API Key 仅写入 Windows 凭据管理器。", "Multiple providers can be saved and enabled at once. Only a matching ID updates an existing configuration. API keys are stored only in Windows Credential Manager.")}</span></div><div class="row"><button class="primary-btn" type="button" data-native-action="new-provider">${tr("新建提供商", "New provider")}</button><button class="ghost-btn" type="button" data-native-action="refresh-providers">${tr("刷新", "Refresh")}</button></div></div>
     <form id="providerConfigForm" autocomplete="off">
       <div class="settings-grid">
-        <div class="field"><label for="providerId">配置 ID</label><input class="input" id="providerId" value="openai-primary" required pattern="[A-Za-z0-9._-]+"></div>
-        <div class="field"><label for="providerDisplayName">显示名称</label><input class="input" id="providerDisplayName" value="OpenAI Primary" required></div>
-        <div class="field"><label for="providerType">提供商</label><select class="select" id="providerType">${providerOptions("open_ai")}</select></div>
-        <div class="field"><label for="providerProtocol">协议</label><select class="select" id="providerProtocol">${protocolOptions("open_ai_responses")}</select></div>
-        <div class="field wide"><label for="providerBaseUrl">Base URL</label><input class="input" id="providerBaseUrl" type="url" value="https://api.openai.com" required></div>
-        <div class="field"><label for="providerCredentialReference">凭据引用 ID</label><input class="input" id="providerCredentialReference" value="credential-openai-primary" required pattern="[A-Za-z0-9._-]+"></div>
-        <div class="field"><label for="providerCredential">API Key（留空则保留现有凭据）</label><input class="input" id="providerCredential" type="password" autocomplete="new-password" spellcheck="false"></div>
-        <div class="field wide"><label for="providerHeaders">自定义 Headers（JSON 数组；敏感 Header 必须使用 credential_reference）</label><textarea class="textarea" id="providerHeaders" spellcheck="false" style="min-height:74px">[]</textarea></div>
-        <div class="field"><label for="providerTestModel">默认模型 / 连接测试模型</label><input class="input" id="providerTestModel" value="gpt-5-mini" required></div>
-        <div class="field"><label for="providerContextWindow">Context window tokens（可选）</label><input class="input" id="providerContextWindow" type="number" min="1" value="128000"></div>
-        <div class="field wide"><label>Provider capabilities</label><div class="row"><label><input id="providerSupportsTools" type="checkbox" checked> Tools</label><label><input id="providerSupportsVision" type="checkbox"> Vision</label><label><input id="providerSupportsStructured" type="checkbox" checked> Structured output</label><label><input id="providerEnabled" type="checkbox" checked> Enabled</label></div></div>
+        <div class="field"><label for="providerId">${tr("配置 ID", "Configuration ID")}</label><input class="input" id="providerId" value="openai-primary" required pattern="[A-Za-z0-9._-]+"></div>
+        <div class="field"><label for="providerDisplayName">${tr("显示名称", "Display name")}</label><input class="input" id="providerDisplayName" value="OpenAI Primary" required></div>
+        <div class="field"><label for="providerType">${tr("提供商", "Provider")}</label><select class="select" id="providerType">${providerOptions("open_ai")}</select></div>
+        <div class="field"><label for="providerProtocol">${tr("协议", "Protocol")}</label><select class="select" id="providerProtocol">${protocolOptions("open_ai_responses")}</select></div>
+        <div class="field wide"><label for="providerBaseUrl">${tr("基础 URL", "Base URL")}</label><input class="input" id="providerBaseUrl" type="url" value="https://api.openai.com" required></div>
+        <div class="field"><label for="providerCredentialReference">${tr("凭据引用 ID", "Credential reference ID")}</label><input class="input" id="providerCredentialReference" value="credential-openai-primary" required pattern="[A-Za-z0-9._-]+"></div>
+        <div class="field"><label for="providerCredential">${tr("API Key（留空则保留现有凭据）", "API key (leave blank to keep the existing credential)")}</label><input class="input" id="providerCredential" type="password" autocomplete="new-password" spellcheck="false"></div>
+        <div class="field wide"><label for="providerHeaders">${tr("自定义请求头（JSON 数组；敏感项必须使用 credential_reference）", "Custom headers (JSON array; sensitive values must use credential_reference)")}</label><textarea class="textarea" id="providerHeaders" spellcheck="false" style="min-height:74px">[]</textarea></div>
+        <div class="field"><label for="providerTestModel">${tr("默认模型 / 连接测试模型", "Default model / connection-test model")}</label><input class="input" id="providerTestModel" value="gpt-5-mini" required></div>
+        <div class="field"><label for="providerContextWindow">${tr("上下文窗口 token 数（可选）", "Context window tokens (optional)")}</label><input class="input" id="providerContextWindow" type="number" min="1" value="128000"></div>
+        <div class="field wide"><label>${tr("提供商能力", "Provider capabilities")}</label><div class="row"><label><input id="providerSupportsTools" type="checkbox" checked> ${tr("工具", "Tools")}</label><label><input id="providerSupportsVision" type="checkbox"> ${tr("视觉", "Vision")}</label><label><input id="providerSupportsStructured" type="checkbox" checked> ${tr("结构化输出", "Structured output")}</label><label><input id="providerEnabled" type="checkbox" checked> ${tr("启用", "Enabled")}</label></div></div>
       </div>
-      <div class="row"><button class="primary-btn" type="submit">保存配置</button><button class="ghost-btn" type="button" data-native-action="test-provider">测试连接</button></div>
+      <div class="row"><button class="primary-btn" type="submit">${tr("保存配置", "Save configuration")}</button><button class="ghost-btn" type="button" data-native-action="test-provider">${tr("测试连接", "Test connection")}</button></div>
       <div class="settings-status" id="providerActionStatus" role="status"></div>
     </form>
-    <section style="margin-top:20px"><h3>已保存配置</h3><div id="providerConfigList"><span class="settings-help">正在读取本机配置…</span></div></section>
-    <section style="margin-top:24px"><div class="pane-head" style="padding-inline:0"><div><strong>Orchestration Model</strong><span class="settings-help">编排、计划、Worker Graph、失败处理与最终汇总使用独立配置。</span></div></div>
+    <section style="margin-top:20px"><h3>${tr("已保存配置", "Saved configurations")}</h3><div id="providerConfigList"><span class="settings-help">${tr("正在读取本机配置…", "Loading local configurations…")}</span></div></section>
+    <section style="margin-top:24px"><div class="pane-head" style="padding-inline:0"><div><strong>${tr("编排模型", "Orchestration Model")}</strong><span class="settings-help">${tr("编排、计划、Worker 图、失败处理与最终汇总使用独立配置。思考强度直接填写提供商原生值；留空使用自动值。所有待保存组合都必须在当前会话中真实测试成功，后端才允许保存。", "Orchestration, planning, Worker graphs, failure handling, and final synthesis use this independent assignment. Enter the Provider-native reasoning effort directly; leave it blank for Auto. Every combination being saved must pass a real test in the current session before the backend allows saving.")}</span></div></div>
       <div class="settings-grid">
-        <div class="field"><label for="orchestrationProvider">Provider config ID</label><input class="input" id="orchestrationProvider" value="${escapeHtml(modelSelectionSettings.orchestration.providerConfigId)}"></div>
-        <div class="field"><label for="orchestrationModel">Model ID</label><input class="input" id="orchestrationModel" value="${escapeHtml(modelSelectionSettings.orchestration.modelId)}"></div>
-        <div class="field"><label for="orchestrationEffort">Reasoning effort</label><select class="select" id="orchestrationEffort"><option value="low">Low</option><option value="medium">Medium</option><option value="high" selected>High</option></select></div>
-        <div class="field"><label for="orchestrationContext">Maximum context tokens</label><input class="input" id="orchestrationContext" type="number" min="1"></div>
-        <div class="field"><label for="orchestrationBudget">Maximum budget (microusd)</label><input class="input" id="orchestrationBudget" type="number" min="1"></div>
-        <label class="field" style="align-content:end"><span><input id="orchestrationLocked" type="checkbox"> 用户锁定</span></label>
-        <div class="field"><label for="orchestrationFallbackProvider">Fallback provider config ID</label><input class="input" id="orchestrationFallbackProvider"></div>
-        <div class="field"><label for="orchestrationFallbackModel">Fallback model ID</label><input class="input" id="orchestrationFallbackModel"></div>
+        <div class="field"><label for="orchestrationProvider">${tr("提供商配置 ID", "Provider configuration ID")}</label><input class="input" id="orchestrationProvider" value="${escapeHtml(modelSelectionSettings.orchestration.providerConfigId)}"></div>
+        <div class="field"><label for="orchestrationModel">${tr("模型 ID", "Model ID")}</label><input class="input" id="orchestrationModel" value="${escapeHtml(modelSelectionSettings.orchestration.modelId)}"></div>
+        <div class="field"><label for="orchestrationCustomEffort">${tr("思考强度", "Reasoning effort")}</label><input class="input" id="orchestrationCustomEffort" value="${escapeHtml(customReasoningEffortValue(modelSelectionSettings.orchestration))}" maxlength="32" pattern="[A-Za-z0-9._-]{1,32}" spellcheck="false" placeholder="${escapeHtml(tr("例如 high、max、xhigh；留空为自动", "For example high, max, xhigh; blank means Auto"))}"><button class="ghost-btn" type="button" data-native-action="test-model-effort" data-model-test-scope="orchestration">${tr("真实测试", "Run real test")}</button><span class="settings-help" data-model-test-status role="status" aria-live="polite"></span></div>
+        <div class="field"><label for="orchestrationContext">${tr("最大上下文 token 数", "Maximum context tokens")}</label><input class="input" id="orchestrationContext" type="number" min="1"></div>
+        <div class="field"><label for="orchestrationBudget">${tr("最大预算（微美元）", "Maximum budget (micro-USD)")}</label><input class="input" id="orchestrationBudget" type="number" min="1"></div>
+        <label class="field" style="align-content:end"><span><input id="orchestrationLocked" type="checkbox"> ${tr("用户锁定", "User locked")}</span></label>
+        <div class="field"><label for="orchestrationFallbackProvider">${tr("备用提供商配置 ID", "Fallback provider configuration ID")}</label><input class="input" id="orchestrationFallbackProvider"></div>
+        <div class="field"><label for="orchestrationFallbackModel">${tr("备用模型 ID", "Fallback model ID")}</label><input class="input" id="orchestrationFallbackModel"></div>
       </div>
-      <div class="pane-head" style="padding-inline:0"><div><strong>Worker Model Pool</strong><span class="settings-help">留空的角色由 Default Worker 或路由策略选择；锁定项不会被 Orchestrator 覆盖。</span></div></div>
+      <div class="pane-head" style="padding-inline:0"><div><strong>${tr("独立视觉模型", "Independent Vision Model")}</strong><span class="settings-help">${tr("主模型不支持图片时，先由视觉模型生成问题导向的安全描述；原图不会发送给纯文本模型。", "When the main model cannot accept images, the vision model first creates a focused inert description. Raw images are never sent to a text-only model.")}</span></div></div>
+      <div class="settings-grid">
+        <label class="field" style="align-content:end"><span><input id="visionBridgeEnabled" type="checkbox" ${vision ? "checked" : ""}> ${tr("启用视觉桥接", "Enable vision bridge")}</span></label>
+        <div class="field"><label for="visionProvider">${tr("提供商配置 ID", "Provider configuration ID")}</label><input class="input" id="visionProvider" value="${escapeHtml(vision?.providerConfigId ?? "")}" placeholder="vision-provider"></div>
+        <div class="field"><label for="visionModel">${tr("视觉模型 ID", "Vision model ID")}</label><input class="input" id="visionModel" value="${escapeHtml(vision?.modelId ?? "")}" placeholder="gpt-4.1-mini / qwen-vl"></div>
+        <div class="field"><label for="visionCustomEffort">${tr("思考强度", "Reasoning effort")}</label><input class="input" id="visionCustomEffort" value="${escapeHtml(customReasoningEffortValue(vision))}" maxlength="32" pattern="[A-Za-z0-9._-]{1,32}" spellcheck="false" placeholder="${escapeHtml(tr("留空为自动", "Blank means Auto"))}"><button class="ghost-btn" type="button" data-native-action="test-model-effort" data-model-test-scope="vision">${tr("真实测试", "Run real test")}</button><span class="settings-help" data-model-test-status role="status" aria-live="polite"></span></div>
+      </div>
+      <div class="pane-head" style="padding-inline:0"><div><strong>${tr("Worker 模型池", "Worker Model Pool")}</strong><span class="settings-help">${tr("留空的角色由默认 Worker 或路由策略选择；锁定项不会被编排模型覆盖。", "Unassigned roles use the Default Worker or routing policy. Locked assignments cannot be overridden by the Orchestration Model.")}</span></div></div>
       <div class="model-pool" id="workerModelPool">${workerPoolMarkup()}</div>
-      <button class="primary-btn" type="button" data-native-action="save-model-settings">保存编排与 Worker 模型</button>
+      <button class="primary-btn" type="button" data-native-action="save-model-settings">${tr("保存编排与 Worker 模型", "Save orchestration and Worker models")}</button>
       <div class="settings-status" id="modelSettingsStatus" role="status"></div>
     </section>
-    <section style="margin-top:24px"><div class="pane-head" style="padding-inline:0"><div><strong>Structured Preferences</strong><span class="settings-help">0–100 优先级、Provider 允许列表和单次运行成本上限。</span></div></div>
+    <section style="margin-top:24px"><div class="pane-head" style="padding-inline:0"><div><strong>${tr("结构化偏好", "Structured Preferences")}</strong><span class="settings-help">${tr("设置 0–100 优先级、提供商允许列表和单次运行成本上限。", "Configure 0–100 priorities, provider allowlists, and per-run cost limits.")}</span></div></div>
       <div class="settings-grid">
-        <div class="field"><label for="priorityQuality">Quality</label><input class="input" id="priorityQuality" type="number" min="0" max="100"></div>
-        <div class="field"><label for="priorityCost">Cost</label><input class="input" id="priorityCost" type="number" min="0" max="100"></div>
-        <div class="field"><label for="prioritySpeed">Speed</label><input class="input" id="prioritySpeed" type="number" min="0" max="100"></div>
-        <div class="field"><label for="priorityPrivacy">Privacy</label><input class="input" id="priorityPrivacy" type="number" min="0" max="100"></div>
-        <div class="field"><label for="allowedProviders">Allowed provider config IDs（逗号分隔）</label><input class="input" id="allowedProviders"></div>
-        <div class="field"><label for="disallowedProviders">Disallowed provider config IDs（逗号分隔）</label><input class="input" id="disallowedProviders"></div>
-        <div class="field"><label for="maximumRunCost">Maximum cost per run (microusd)</label><input class="input" id="maximumRunCost" type="number" min="1"></div>
-        <div class="field"><label>Behavior</label><div class="row"><label><input id="preferLocal" type="checkbox"> Prefer local</label><label><input id="fallbackAllowed" type="checkbox"> Allow fallback</label><label><input id="askCostEscalation" type="checkbox"> Ask on cost escalation</label></div></div>
+        <div class="field"><label for="priorityQuality">${tr("质量", "Quality")}</label><input class="input" id="priorityQuality" type="number" min="0" max="100"></div>
+        <div class="field"><label for="priorityCost">${tr("成本", "Cost")}</label><input class="input" id="priorityCost" type="number" min="0" max="100"></div>
+        <div class="field"><label for="prioritySpeed">${tr("速度", "Speed")}</label><input class="input" id="prioritySpeed" type="number" min="0" max="100"></div>
+        <div class="field"><label for="priorityPrivacy">${tr("隐私", "Privacy")}</label><input class="input" id="priorityPrivacy" type="number" min="0" max="100"></div>
+        <div class="field"><label for="allowedProviders">${tr("允许的提供商配置 ID（逗号分隔）", "Allowed provider configuration IDs (comma-separated)")}</label><input class="input" id="allowedProviders"></div>
+        <div class="field"><label for="disallowedProviders">${tr("禁用的提供商配置 ID（逗号分隔）", "Disallowed provider configuration IDs (comma-separated)")}</label><input class="input" id="disallowedProviders"></div>
+        <div class="field"><label for="maximumRunCost">${tr("单次运行最大成本（微美元）", "Maximum cost per run (micro-USD)")}</label><input class="input" id="maximumRunCost" type="number" min="1"></div>
+        <div class="field"><label>${tr("行为", "Behavior")}</label><div class="row"><label><input id="preferLocal" type="checkbox"> ${tr("优先本地", "Prefer local")}</label><label><input id="fallbackAllowed" type="checkbox"> ${tr("允许备用模型", "Allow fallback")}</label><label><input id="askCostEscalation" type="checkbox"> ${tr("成本上升时询问", "Ask on cost escalation")}</label></div></div>
       </div>
-      <button class="ghost-btn" type="button" data-native-action="save-structured-routing">保存结构化偏好</button>
+      <button class="ghost-btn" type="button" data-native-action="save-structured-routing">${tr("保存结构化偏好", "Save structured preferences")}</button>
     </section>
-    <section style="margin-top:24px"><div class="pane-head" style="padding-inline:0"><div><strong>自然语言路由偏好</strong><span class="settings-help">解析只生成草案；请检查命中规则与警告，再明确确认保存。</span></div></div>
-      <div class="field"><label for="routingPreference">偏好说明</label><textarea class="textarea" id="routingPreference" style="min-height:90px">编程任务优先 OpenAI，写作优先 Claude，日常任务优先 DeepSeek；如果提高成本先问我。</textarea></div>
-      <div class="row"><button class="ghost-btn" type="button" data-native-action="parse-routing">解析为草案</button><button class="primary-btn" type="button" data-native-action="confirm-routing" disabled>确认并保存</button></div>
+    <section style="margin-top:24px"><div class="pane-head" style="padding-inline:0"><div><strong>${tr("自然语言路由偏好", "Natural-language routing preferences")}</strong><span class="settings-help">${tr("解析只生成草案；请检查命中规则与警告，再明确确认保存。", "Parsing creates a draft only. Review matched rules and warnings before explicitly saving it.")}</span></div></div>
+      <div class="field"><label for="routingPreference">${tr("偏好说明", "Preference description")}</label><textarea class="textarea" id="routingPreference" style="min-height:90px">${tr("编程任务优先 OpenAI，写作优先 Claude，日常任务优先 DeepSeek；如果提高成本先问我。", "Prefer OpenAI for programming, Claude for writing, and DeepSeek for daily tasks; ask before increasing cost.")}</textarea></div>
+      <div class="row"><button class="ghost-btn" type="button" data-native-action="parse-routing">${tr("解析为草案", "Parse draft")}</button><button class="primary-btn" type="button" data-native-action="confirm-routing" disabled>${tr("确认并保存", "Confirm and save")}</button></div>
       <div class="settings-status" id="routingActionStatus" role="status"></div>
       <div id="routingReview"></div>
     </section>`;
@@ -3001,14 +3568,13 @@ function renderProviderList(): void {
   const list = document.querySelector<HTMLElement>("#providerConfigList");
   if (!list) return;
   if (providerConfigs.length === 0) {
-    list.innerHTML =
-      '<div class="provider-card"><span class="settings-help">尚未保存 Provider 配置。</span></div>';
+    list.innerHTML = `<div class="provider-card"><span class="settings-help">${tr("尚未保存提供商配置。", "No provider configurations have been saved.")}</span></div>`;
     return;
   }
   list.innerHTML = providerConfigs
     .map(
       (config, index) =>
-        `<article class="provider-card"><header><div><strong>${escapeHtml(config.displayName)}</strong><small>${escapeHtml(config.providerType)} · ${escapeHtml(config.protocol)} · ${escapeHtml(config.baseUrl)}</small><small>Default model · ${escapeHtml(config.defaultModelId || "not configured")} · Context ${config.contextWindowTokens ?? "unknown"}</small><small>Capabilities · ${[config.supportsTools && "tools", config.supportsVision && "vision", config.supportsStructuredOutput && "structured"].filter(Boolean).join(", ") || "text only"} · Credential reference ${escapeHtml(config.credentialReferenceId)}</small></div><span class="status ${config.enabled ? "complete" : "waiting"}">${config.enabled ? "Enabled" : "Disabled"}</span></header><div class="row" style="margin-top:10px"><button class="ghost-btn" type="button" data-native-action="edit-provider" data-provider-index="${index}">载入编辑</button><button class="text-btn" type="button" data-native-action="delete-credential" data-provider-index="${index}">删除凭据</button></div></article>`,
+        `<article class="provider-card"><header><div><strong>${escapeHtml(config.displayName)}</strong><small>${escapeHtml(config.providerType)} · ${escapeHtml(config.protocol)} · ${escapeHtml(config.baseUrl)}</small><small>${tr("默认模型", "Default model")} · ${escapeHtml(config.defaultModelId || tr("未配置", "not configured"))} · ${tr("上下文", "Context")} ${config.contextWindowTokens ?? tr("未知", "unknown")}</small><small>${tr("能力", "Capabilities")} · ${[config.supportsTools && tr("工具", "tools"), config.supportsVision && tr("视觉", "vision"), config.supportsStructuredOutput && tr("结构化输出", "structured output")].filter(Boolean).join(", ") || tr("仅文本", "text only")} · ${tr("凭据引用", "Credential reference")} ${escapeHtml(config.credentialReferenceId)}</small></div><span class="status ${config.enabled ? "complete" : "waiting"}">${config.enabled ? tr("已启用", "Enabled") : tr("已停用", "Disabled")}</span></header><div class="row" style="margin-top:10px"><button class="ghost-btn" type="button" data-native-action="edit-provider" data-provider-index="${index}">${tr("载入编辑", "Load for editing")}</button><button class="text-btn" type="button" data-native-action="delete-credential" data-provider-index="${index}">${tr("删除凭据", "Delete credential")}</button></div></article>`,
     )
     .join("");
 }
@@ -3078,7 +3644,10 @@ function populateProviderForm(config: ProviderConfig): void {
   if (credential) credential.value = "";
   setSettingsStatus(
     "providerActionStatus",
-    `已载入 ${config.displayName}；凭据保持为空且不会从系统读取回显。`,
+    tr(
+      `已载入 ${config.displayName}；凭据保持为空且不会从系统读取回显。`,
+      `Loaded ${config.displayName}. The credential remains blank and is never read back from the system.`,
+    ),
   );
 }
 
@@ -3114,7 +3683,10 @@ function resetProviderForm(): void {
   if (vision) vision.checked = false;
   setSettingsStatus(
     "providerActionStatus",
-    "新建模式：填写唯一配置 ID 后保存，不会覆盖其他 Provider。",
+    tr(
+      "新建模式：填写唯一配置 ID 后保存，不会覆盖其他提供商。",
+      "New-provider mode: save a unique configuration ID without overwriting another provider.",
+    ),
   );
   document.querySelector<HTMLInputElement>("#providerId")?.focus();
 }
@@ -3240,12 +3812,15 @@ function populateModelSelectionSettings(): void {
   const values: Record<string, string> = {
     orchestrationProvider: assignment.providerConfigId,
     orchestrationModel: assignment.modelId,
-    orchestrationEffort: assignment.reasoningEffort,
     orchestrationContext: assignment.maximumContextTokens?.toString() ?? "",
     orchestrationBudget: assignment.maximumBudgetMicrousd?.toString() ?? "",
     orchestrationFallbackProvider:
       assignment.fallbackProviderConfigId ?? "",
     orchestrationFallbackModel: assignment.fallbackModelId ?? "",
+    visionProvider: modelSelectionSettings.vision?.providerConfigId ?? "",
+    visionModel: modelSelectionSettings.vision?.modelId ?? "",
+    orchestrationCustomEffort: customReasoningEffortValue(assignment),
+    visionCustomEffort: customReasoningEffortValue(modelSelectionSettings.vision),
   };
   for (const [id, value] of Object.entries(values)) {
     const input = document.querySelector<
@@ -3256,11 +3831,15 @@ function populateModelSelectionSettings(): void {
   const locked =
     document.querySelector<HTMLInputElement>("#orchestrationLocked");
   if (locked) locked.checked = assignment.locked;
+  const visionEnabled =
+    document.querySelector<HTMLInputElement>("#visionBridgeEnabled");
+  if (visionEnabled) visionEnabled.checked = modelSelectionSettings.vision !== null;
   const pool = document.querySelector<HTMLElement>("#workerModelPool");
   if (pool) pool.innerHTML = workerPoolMarkup();
 }
 
 function readModelSelectionSettings(): ModelSelectionSettings {
+  const customEffort = (value: string): string | null => value.trim() || null;
   const workerPool = Array.from(
     document.querySelectorAll<HTMLElement>("[data-worker-model-row]"),
   )
@@ -3276,11 +3855,11 @@ function readModelSelectionSettings(): ModelSelectionSettings {
         role: row.dataset.workerModelRow as ModelRole,
         providerConfigId,
         modelId,
-        reasoningEffort:
-          row.querySelector<HTMLSelectElement>("[data-worker-effort]")?.value as
-            | "low"
-            | "medium"
-            | "high",
+        customReasoningEffort: customEffort(
+          row.querySelector<HTMLInputElement>("[data-worker-custom-effort]")
+            ?.value ?? "",
+        ),
+        reasoningEffort: "auto",
         maximumContextTokens: null,
         maximumBudgetMicrousd: null,
         fallbackProviderConfigId: null,
@@ -3293,15 +3872,20 @@ function readModelSelectionSettings(): ModelSelectionSettings {
     .filter((assignment): assignment is ModelAssignment => assignment !== null);
   const fallbackProvider = inputValue("orchestrationFallbackProvider");
   const fallbackModel = inputValue("orchestrationFallbackModel");
+  const visionEnabled =
+    document.querySelector<HTMLInputElement>("#visionBridgeEnabled")?.checked ??
+    false;
+  const visionProvider = inputValue("visionProvider");
+  const visionModel = inputValue("visionModel");
+  const orchestrationProvider = inputValue("orchestrationProvider");
+  const orchestrationModel = inputValue("orchestrationModel");
   return {
     orchestration: {
       role: "orchestration",
-      providerConfigId: inputValue("orchestrationProvider"),
-      modelId: inputValue("orchestrationModel"),
-      reasoningEffort: inputValue("orchestrationEffort") as
-        | "low"
-        | "medium"
-        | "high",
+      providerConfigId: orchestrationProvider,
+      modelId: orchestrationModel,
+      customReasoningEffort: customEffort(inputValue("orchestrationCustomEffort")),
+      reasoningEffort: "auto",
       maximumContextTokens: optionalNumber("orchestrationContext"),
       maximumBudgetMicrousd: optionalNumber("orchestrationBudget"),
       fallbackProviderConfigId: fallbackProvider || null,
@@ -3310,7 +3894,22 @@ function readModelSelectionSettings(): ModelSelectionSettings {
         document.querySelector<HTMLInputElement>("#orchestrationLocked")
           ?.checked ?? false,
     },
+    vision: visionEnabled
+      ? {
+          role: "vision",
+          providerConfigId: visionProvider,
+          modelId: visionModel,
+          customReasoningEffort: customEffort(inputValue("visionCustomEffort")),
+          reasoningEffort: "auto",
+          maximumContextTokens: null,
+          maximumBudgetMicrousd: null,
+          fallbackProviderConfigId: null,
+          fallbackModelId: null,
+          locked: true,
+        }
+      : null,
     workerPool,
+    customReasoningEfforts: {},
   };
 }
 
@@ -3346,7 +3945,7 @@ async function loadNativeProviderSettings(): Promise<void> {
   } catch (error) {
     setSettingsStatus(
       "providerActionStatus",
-      `读取本机 Provider 设置失败：${errorMessage(error)}`,
+      `${tr("读取本机提供商设置失败", "Failed to read local Provider settings")}: ${errorMessage(error)}`,
       "error",
     );
   }
@@ -3354,57 +3953,57 @@ async function loadNativeProviderSettings(): Promise<void> {
 
 function skillsMcpMarkup(): string {
   return `<div style="padding:18px 22px;max-width:1040px">
-    <div class="pane-head" style="padding-inline:0"><div><strong>Skills, Tools &amp; MCP</strong><span class="settings-help">使用 LunaScope 固定全局目录，不随项目 workspace 切换。外部进程、网络与密钥使用始终经过 Policy Engine。</span></div><button class="ghost-btn" type="button" data-native-action="refresh-extensions">刷新目录</button></div>
-    <div class="routing-review">ROOT · ${escapeHtml(extensionDirectories.root)}
-SYSTEM SKILLS · ${escapeHtml(extensionDirectories.systemSkills)}
-USER SKILLS · ${escapeHtml(extensionDirectories.userSkills)}
-TOOLS · ${escapeHtml(extensionDirectories.tools)}
+    <div class="pane-head" style="padding-inline:0"><div><strong>${tr("技能、工具与 MCP", "Skills, Tools & MCP")}</strong><span class="settings-help">${tr("使用 LunaScope 固定全局目录，不随项目工作区切换。外部进程、网络与密钥使用始终经过策略引擎。", "LunaScope uses fixed global directories independent of the project workspace. External processes, network access, and secrets always pass through the Policy Engine.")}</span></div><button class="ghost-btn" type="button" data-native-action="refresh-extensions">${tr("刷新目录", "Refresh directories")}</button></div>
+    <div class="routing-review">${tr("根目录", "ROOT")} · ${escapeHtml(extensionDirectories.root)}
+${tr("系统技能", "SYSTEM SKILLS")} · ${escapeHtml(extensionDirectories.systemSkills)}
+${tr("用户技能", "USER SKILLS")} · ${escapeHtml(extensionDirectories.userSkills)}
+${tr("工具", "TOOLS")} · ${escapeHtml(extensionDirectories.tools)}
 MCP · ${escapeHtml(extensionDirectories.mcp)}</div>
     <div class="settings-status" id="extensionActionStatus" role="status"></div>
 
-    <section style="margin-top:18px"><div class="pane-head" style="padding-inline:0"><div><strong>Skill Catalog</strong><span class="settings-help">系统 Skill 与用户 Skill 独立存放；兼容格式在导入时归一化，兼容性不等于允许执行。</span></div><span class="mono" id="skillCatalogCount">0</span></div><div id="skillCatalogList"><span class="settings-help">正在发现摘要…</span></div><div id="loadedSkillDetail"></div></section>
+    <section style="margin-top:18px"><div class="pane-head" style="padding-inline:0"><div><strong>${tr("技能目录", "Skill Catalog")}</strong><span class="settings-help">${tr("系统技能与用户技能独立存放；兼容格式在导入时归一化，兼容性不等于允许执行。", "System and user Skills are stored separately. Compatible formats are normalized during import; compatibility does not grant execution permission.")}</span></div><span class="mono" id="skillCatalogCount">0</span></div><div id="skillCatalogList"><span class="settings-help">${tr("正在发现摘要…", "Discovering summaries…")}</span></div><div id="loadedSkillDetail"></div></section>
 
     <section style="margin-top:24px" aria-labelledby="githubImportHeading">
       <div class="pane-head" style="padding-inline:0"><div><strong id="githubImportHeading">${tr("从 GitHub 导入 Skill", "Import a Skill from GitHub")}</strong><span class="settings-help">${tr("直接粘贴 repository、tree、branch、tag、commit 或子目录链接。内容会固定到完整 commit SHA，并先进入隔离区检查；不会 checkout 或执行。", "Paste a repository, tree, branch, tag, commit, or subdirectory URL. Content is pinned to a full commit SHA and inspected in quarantine; it is never checked out or executed.")}</span></div></div>
-      <div class="field"><label for="githubImportUrl">GitHub Skill URL</label><div class="row"><input class="input" id="githubImportUrl" type="url" placeholder="https://github.com/owner/repo/tree/main/path/to/skill" spellcheck="false" style="flex:1"><button class="primary-btn" type="button" data-native-action="preview-github-import">${tr("检查链接", "Inspect URL")}</button></div></div>
+      <div class="field"><label for="githubImportUrl">${tr("GitHub 技能链接", "GitHub Skill URL")}</label><div class="row"><input class="input" id="githubImportUrl" type="url" placeholder="https://github.com/owner/repo/tree/main/path/to/skill" spellcheck="false" style="flex:1"><button class="primary-btn" type="button" data-native-action="preview-github-import">${tr("检查链接", "Inspect URL")}</button></div></div>
       <div class="settings-status" id="githubImportStatus" role="status"></div>
-      <div id="githubImportPreview"><span class="settings-help">No repository has been downloaded.</span></div>
-      <div class="pane-head" style="padding-inline:0;margin-top:16px"><div><strong>Installed versions</strong><span class="settings-help">Each approved update retains an immutable snapshot for comparison and rollback.</span></div><button class="ghost-btn" type="button" data-native-action="refresh-imports">Refresh</button></div>
-      <div id="installedImportList"><span class="settings-help">Reading local import manifests…</span></div>
+      <div id="githubImportPreview"><span class="settings-help">${tr("尚未下载任何仓库。", "No repository has been downloaded.")}</span></div>
+      <div class="pane-head" style="padding-inline:0;margin-top:16px"><div><strong>${tr("已安装版本", "Installed versions")}</strong><span class="settings-help">${tr("每次批准的更新都会保留不可变快照，用于比较和回滚。", "Each approved update retains an immutable snapshot for comparison and rollback.")}</span></div><button class="ghost-btn" type="button" data-native-action="refresh-imports">${tr("刷新", "Refresh")}</button></div>
+      <div id="installedImportList"><span class="settings-help">${tr("正在读取本地导入清单…", "Reading local import manifests…")}</span></div>
       <div id="githubImportComparison"></div>
     </section>
 
-    <section style="margin-top:24px"><div class="pane-head" style="padding-inline:0"><div><strong>MCP Servers</strong><span class="settings-help">原生支持 stdio 与 Streamable HTTP。Authorization 等敏感值必须引用 Windows Credential Manager。</span></div></div>
+    <section style="margin-top:24px"><div class="pane-head" style="padding-inline:0"><div><strong>${tr("MCP 服务器", "MCP Servers")}</strong><span class="settings-help">${tr("原生支持 stdio 与流式 HTTP。Authorization 等敏感值必须引用 Windows 凭据管理器。", "Native stdio and Streamable HTTP are supported. Sensitive values such as Authorization must reference Windows Credential Manager.")}</span></div></div>
       <form id="mcpServerForm" autocomplete="off">
         <div class="settings-grid">
-          <div class="field"><label for="mcpServerId">配置 ID</label><input class="input" id="mcpServerId" value="docs-local" required pattern="[A-Za-z0-9._-]+"></div>
-          <div class="field"><label for="mcpServerName">显示名称</label><input class="input" id="mcpServerName" value="Documentation MCP" required></div>
-          <div class="field"><label for="mcpTransportKind">Transport</label><select class="select" id="mcpTransportKind"><option value="streamable_http">Streamable HTTP</option><option value="stdio">stdio</option></select></div>
-          <div class="field"><label for="mcpTimeout">Timeout (ms)</label><input class="input" id="mcpTimeout" type="number" min="1" max="600000" value="30000"></div>
-          <div class="field wide"><label for="mcpTarget">URL 或绝对可执行文件路径</label><input class="input" id="mcpTarget" value="https://example.com/mcp" required spellcheck="false"></div>
-          <div class="field wide"><label for="mcpArgs">stdio args（JSON 数组）</label><textarea class="textarea" id="mcpArgs" spellcheck="false" style="min-height:58px">[]</textarea></div>
-          <div class="field"><label for="mcpCwd">stdio cwd（绝对路径，可选）</label><input class="input" id="mcpCwd" spellcheck="false"></div>
-          <div class="field"><label for="mcpEnabled">状态</label><label><input id="mcpEnabled" type="checkbox" checked> Enabled</label></div>
-          <div class="field wide"><label for="mcpEnvironment">stdio environment（JSON 对象，值为 literal / credential_reference）</label><textarea class="textarea" id="mcpEnvironment" spellcheck="false" style="min-height:74px">{}</textarea></div>
-          <div class="field wide"><label for="mcpHeaders">HTTP headers（JSON 数组，值为 literal / credential_reference）</label><textarea class="textarea" id="mcpHeaders" spellcheck="false" style="min-height:74px">[]</textarea></div>
-          <div class="field"><label for="mcpCredentialReference">本次写入的凭据引用 ID（可选）</label><input class="input" id="mcpCredentialReference" value="bearer" pattern="[A-Za-z0-9._-]+"></div>
-          <div class="field"><label for="mcpCredentialSecret">Secret（留空不修改；不会回显）</label><input class="input" id="mcpCredentialSecret" type="password" autocomplete="new-password" spellcheck="false"></div>
+          <div class="field"><label for="mcpServerId">${tr("配置 ID", "Configuration ID")}</label><input class="input" id="mcpServerId" value="docs-local" required pattern="[A-Za-z0-9._-]+"></div>
+          <div class="field"><label for="mcpServerName">${tr("显示名称", "Display name")}</label><input class="input" id="mcpServerName" value="Documentation MCP" required></div>
+          <div class="field"><label for="mcpTransportKind">${tr("传输方式", "Transport")}</label><select class="select" id="mcpTransportKind"><option value="streamable_http">${tr("流式 HTTP", "Streamable HTTP")}</option><option value="stdio">stdio</option></select></div>
+          <div class="field"><label for="mcpTimeout">${tr("超时（毫秒）", "Timeout (ms)")}</label><input class="input" id="mcpTimeout" type="number" min="1" max="600000" value="30000"></div>
+          <div class="field wide"><label for="mcpTarget">${tr("URL 或绝对可执行文件路径", "URL or absolute executable path")}</label><input class="input" id="mcpTarget" value="https://example.com/mcp" required spellcheck="false"></div>
+          <div class="field wide"><label for="mcpArgs">${tr("stdio 参数（JSON 数组）", "stdio arguments (JSON array)")}</label><textarea class="textarea" id="mcpArgs" spellcheck="false" style="min-height:58px">[]</textarea></div>
+          <div class="field"><label for="mcpCwd">${tr("stdio 工作目录（绝对路径，可选）", "stdio working directory (absolute path, optional)")}</label><input class="input" id="mcpCwd" spellcheck="false"></div>
+          <div class="field"><label for="mcpEnabled">${tr("状态", "Status")}</label><label><input id="mcpEnabled" type="checkbox" checked> ${tr("启用", "Enabled")}</label></div>
+          <div class="field wide"><label for="mcpEnvironment">${tr("stdio 环境变量（JSON 对象，值为 literal / credential_reference）", "stdio environment (JSON object; values use literal / credential_reference)")}</label><textarea class="textarea" id="mcpEnvironment" spellcheck="false" style="min-height:74px">{}</textarea></div>
+          <div class="field wide"><label for="mcpHeaders">${tr("HTTP 请求头（JSON 数组，值为 literal / credential_reference）", "HTTP headers (JSON array; values use literal / credential_reference)")}</label><textarea class="textarea" id="mcpHeaders" spellcheck="false" style="min-height:74px">[]</textarea></div>
+          <div class="field"><label for="mcpCredentialReference">${tr("本次写入的凭据引用 ID（可选）", "Credential reference ID to write (optional)")}</label><input class="input" id="mcpCredentialReference" value="bearer" pattern="[A-Za-z0-9._-]+"></div>
+          <div class="field"><label for="mcpCredentialSecret">${tr("密钥（留空不修改；不会回显）", "Secret (leave blank to keep it; never displayed)")}</label><input class="input" id="mcpCredentialSecret" type="password" autocomplete="new-password" spellcheck="false"></div>
         </div>
-        <div class="row"><button class="primary-btn" type="submit">保存 MCP 配置</button></div>
+        <div class="row"><button class="primary-btn" type="submit">${tr("保存 MCP 配置", "Save MCP configuration")}</button></div>
       </form>
       <div class="settings-status" id="mcpActionStatus" role="status"></div>
-      <div id="mcpServerList"><span class="settings-help">正在读取本机配置…</span></div>
+      <div id="mcpServerList"><span class="settings-help">${tr("正在读取本机配置…", "Reading local configurations…")}</span></div>
     </section>
 
-    <section style="margin-top:24px"><div class="pane-head" style="padding-inline:0"><div><strong>Tool Routing Preview</strong><span class="settings-help">Planner / Reviewer 默认只读；普通 Worker 最多路由 1–3 类工具。Ask 与 Deny 不会静默变成 Allow。</span></div></div>
+    <section style="margin-top:24px"><div class="pane-head" style="padding-inline:0"><div><strong>${tr("工具路由预览", "Tool Routing Preview")}</strong><span class="settings-help">${tr("规划器与审查器默认只读；普通子 Agent 最多路由 1–3 类工具。询问与拒绝不会静默变成允许。", "Planner and Reviewer are read-only by default. Ordinary Workers receive at most 1–3 tool classes. Ask and Deny never silently become Allow.")}</span></div></div>
       <div class="settings-grid">
-        <div class="field"><label for="routeRole">Worker role</label><select class="select" id="routeRole"><option value="builder">Builder</option><option value="researcher">Researcher</option><option value="planner">Planner</option><option value="reviewer">Reviewer</option></select></div>
-        <div class="field"><label for="routeMaxTools">Max tool classes</label><input class="input" id="routeMaxTools" type="number" min="1" max="3" value="3"></div>
-        <div class="field wide"><label for="routeObjective">Objective</label><input class="input" id="routeObjective" value="研究并实现一个安全的代码修复"></div>
-        <div class="field"><label for="routePreferredTools">Preferred tool IDs（逗号分隔）</label><input class="input" id="routePreferredTools" value=""></div>
-        <div class="field"><label for="routeSkills">Required skill catalog IDs（逗号分隔）</label><input class="input" id="routeSkills" value=""></div>
+        <div class="field"><label for="routeRole">${tr("子 Agent 职责", "Worker role")}</label><select class="select" id="routeRole"><option value="builder">${tr("实现", "Builder")}</option><option value="researcher">${tr("研究", "Researcher")}</option><option value="planner">${tr("规划", "Planner")}</option><option value="reviewer">${tr("审查", "Reviewer")}</option></select></div>
+        <div class="field"><label for="routeMaxTools">${tr("最大工具类别数", "Maximum tool classes")}</label><input class="input" id="routeMaxTools" type="number" min="1" max="3" value="3"></div>
+        <div class="field wide"><label for="routeObjective">${tr("目标", "Objective")}</label><input class="input" id="routeObjective" value="${tr("研究并实现一个安全的代码修复", "Research and implement a safe code fix")}"></div>
+        <div class="field"><label for="routePreferredTools">${tr("首选工具 ID（逗号分隔）", "Preferred tool IDs (comma-separated)")}</label><input class="input" id="routePreferredTools" value=""></div>
+        <div class="field"><label for="routeSkills">${tr("所需技能目录 ID（逗号分隔）", "Required Skill catalog IDs (comma-separated)")}</label><input class="input" id="routeSkills" value=""></div>
       </div>
-      <button class="ghost-btn" type="button" data-native-action="route-tools">评估工具路由</button>
+      <button class="ghost-btn" type="button" data-native-action="route-tools">${tr("评估工具路由", "Evaluate tool routing")}</button>
       <div class="settings-status" id="toolRouteStatus" role="status"></div>
       <div id="toolRoutingResult"></div>
     </section>
@@ -3424,6 +4023,9 @@ function nativeWorkerGraphMarkup(
   plan: OrchestrationSession["plan"],
   states: Record<string, string>,
 ): string {
+  if (plan.workers.length === 0) {
+    return `<article class="native-orch-empty" data-empty-kind="orchestration-topology"><strong>${tr("编排图数据不完整", "The orchestration graph is incomplete")}</strong><span class="settings-help">${tr("当前运行记录没有可绘制的子 Agent。请重新规划该任务；LunaScope 不会用虚假的节点代替缺失拓扑。", "This run has no drawable Workers. Replan the task; LunaScope will not replace missing topology with synthetic nodes.")}</span></article>`;
+  }
   const workersById = new Map(
     plan.workers.map((worker) => [worker.workerId, worker]),
   );
@@ -3453,27 +4055,60 @@ function nativeWorkerGraphMarkup(
     const level = levelFor(worker);
     levels.set(level, [...(levels.get(level) ?? []), worker]);
   });
-  const maximumLevel = Math.max(0, ...levels.keys());
+  const maximumLevel = Math.max(...levels.keys());
   const maximumRows = Math.max(1, ...[...levels.values()].map((items) => items.length));
-  const planeHeight = Math.max(320, 44 + maximumRows * 154);
-  const workerWidth = 216;
-  const workerHeight = 124;
+  const workerWidth = 224;
+  const workerHeight = 128;
+  const rowGap = 28;
+  const columnGap = 92;
+  const workerStartX = 316;
+  const planeHeight = Math.max(
+    360,
+    72 + maximumRows * workerHeight + (maximumRows - 1) * rowGap,
+  );
   const positions = new Map<string, { x: number; y: number }>();
-  for (const [level, workers] of levels) {
-    const occupied = workers.length * workerHeight + (workers.length - 1) * 34;
-    const startY = Math.max(24, (planeHeight - occupied) / 2);
+  const orderedLevels = new Map<number, WorkerSpec[]>();
+  for (let level = 0; level <= maximumLevel; level += 1) {
+    const workers = [...(levels.get(level) ?? [])];
+    workers.sort((left, right) => {
+      const upstreamCenter = (worker: WorkerSpec): number => {
+        const upstream = worker.dependencies
+          .map((dependency) => positions.get(dependency)?.y)
+          .filter((value): value is number => value !== undefined);
+        return upstream.length
+          ? upstream.reduce((sum, value) => sum + value, 0) / upstream.length
+          : Number.POSITIVE_INFINITY;
+      };
+      const upstreamOrder = upstreamCenter(left) - upstreamCenter(right);
+      if (Number.isFinite(upstreamOrder) && upstreamOrder !== 0) return upstreamOrder;
+      const groupOrder = (left.parallelGroup ?? "").localeCompare(right.parallelGroup ?? "");
+      if (groupOrder !== 0) return groupOrder;
+      return (left.displayName || left.workerId).localeCompare(
+        right.displayName || right.workerId,
+      );
+    });
+    if (workers.length > 0) orderedLevels.set(level, workers);
+    const occupied = workers.length * workerHeight + (workers.length - 1) * rowGap;
+    const startY = Math.max(48, (planeHeight - occupied) / 2);
     workers.forEach((worker, row) => {
       positions.set(worker.workerId, {
-        x: 314 + level * 292,
-        y: startY + row * (workerHeight + 34),
+        x: workerStartX + level * (workerWidth + columnGap),
+        y: startY + row * (workerHeight + rowGap),
       });
     });
   }
-  const synthesisX = 314 + (maximumLevel + 1) * 292;
-  const planeWidth = synthesisX + 270;
+  const synthesisX = workerStartX + (maximumLevel + 1) * (workerWidth + columnGap);
+  const planeWidth = synthesisX + workerWidth + 34;
   const centerY = (planeHeight - workerHeight) / 2;
-  const roots = plan.workers.filter((worker) => worker.dependencies.length === 0);
-  const dependedOn = new Set(plan.workers.flatMap((worker) => worker.dependencies));
+  const roots = plan.workers.filter(
+    (worker) =>
+      worker.dependencies.filter((dependency) => workersById.has(dependency)).length === 0,
+  );
+  const dependedOn = new Set(
+    plan.workers.flatMap((worker) =>
+      worker.dependencies.filter((dependency) => workersById.has(dependency)),
+    ),
+  );
   const leaves = plan.workers.filter(
     (worker) => !dependedOn.has(worker.workerId),
   );
@@ -3507,14 +4142,16 @@ function nativeWorkerGraphMarkup(
       synthesis: true,
     })),
   ];
-  const phaseMarkup = [...levels.entries()]
+  const phaseMarkup = [...orderedLevels.entries()]
     .sort(([left], [right]) => left - right)
     .map(([level, workers]) => {
-      const roles = [...new Set(workers.map((worker) => worker.role))]
-        .map(orchestrationRoleLabel)
-        .join(" / ")
-        .toUpperCase();
-      return `<div class="native-graph-phase" style="left:${286 + level * 292}px;top:12px;width:260px;height:${planeHeight - 24}px"><span>P${level + 1} · ${escapeHtml(roles)}</span></div>`;
+      const parallelGroups = new Set(
+        workers.map((worker) => worker.parallelGroup).filter(Boolean),
+      ).size;
+      const phaseLabel = parallelGroups > 0
+        ? tr(`P${level + 1} · ${workers.length} 个任务 · ${parallelGroups} 个并行组`, `P${level + 1} · ${workers.length} tasks · ${parallelGroups} parallel groups`)
+        : tr(`P${level + 1} · ${workers.length} 个任务`, `P${level + 1} · ${workers.length} tasks`);
+      return `<div class="native-graph-phase" data-native-x="${workerStartX - 18 + level * (workerWidth + columnGap)}" data-native-y="16" data-native-width="${workerWidth + 36}" data-native-height="${planeHeight - 32}"><span>${escapeHtml(phaseLabel)}</span></div>`;
     })
     .join("");
   const workerNodes = plan.workers
@@ -3522,10 +4159,10 @@ function nativeWorkerGraphMarkup(
       const position = positions.get(worker.workerId)!;
       const state = states[worker.workerId] ?? "planned";
       const running = ["running_model", "running_tool", "verifying", "recovering", "retrying", "localizing", "repair_planning"].includes(state);
-      return `<button class="native-graph-node ${running ? "is-running" : ""}" type="button" style="left:${position.x}px;top:${position.y}px" data-native-action="focus-orchestration-worker" data-orchestration-worker-index="${index}" data-native-worker-id="${escapeHtml(worker.workerId)}" aria-label="${escapeHtml(tr(`查看${orchestrationRoleLabel(worker.role)}子 Agent`, `Inspect ${worker.role} Worker`))}">
-        <span class="native-graph-node-head"><span><span class="native-graph-node-id">${escapeHtml(worker.workerId)}</span><span class="native-graph-node-role">${escapeHtml(orchestrationRoleLabel(worker.role))}</span></span><span class="node-status">${escapeHtml(orchestrationStateLabel(state))}</span></span>
-        <span class="native-graph-node-body">${escapeHtml(localizedModelProse(worker.task,"执行本节点职责并完成对应交付物与验收标准。","Execute this node and its acceptance criteria."))}${workerTagMarkup(worker.tags)}</span>
-        <span class="native-graph-node-foot"><span>${worker.dependencies.length ? tr("等待前置结果","DEPENDENCY") : tr("可调度","READY")}</span><span>${escapeHtml(localizedModelProse(worker.expectedOutput,"真实交付物与验收证据。","Deliverable and evidence."))}</span></span>
+      return `<button class="native-graph-node ${running ? "is-running" : ""}" type="button" data-native-x="${position.x}" data-native-y="${position.y}" data-native-action="focus-orchestration-worker" data-orchestration-worker-index="${index}" data-native-worker-id="${escapeHtml(worker.workerId)}" data-native-worker-state="${escapeHtml(state)}" aria-label="${escapeHtml(tr(`查看${orchestrationRoleLabel(worker.role)}子 Agent`, `Inspect ${worker.role} Worker`))}">
+        <span class="native-graph-node-head"><span><span class="native-graph-node-id">${escapeHtml(worker.workerId)}</span><span class="native-graph-node-role">${escapeHtml(worker.displayName || orchestrationRoleLabel(worker.role))}</span></span><span class="node-status" data-native-worker-status>${escapeHtml(orchestrationStateLabel(state))}</span></span>
+        <span class="native-graph-node-body">${escapeHtml(localizedModelProse(worker.task,"执行当前任务。","Complete this task."))}</span>
+        <span class="native-graph-node-foot"><span>${worker.parallelGroup ? escapeHtml(worker.parallelGroup) : worker.dependencies.length ? tr("等待依赖","DEPENDENCY") : tr("就绪","READY")}</span><span>${escapeHtml(worker.writeScopes[0] ?? worker.expectedOutput)}</span></span>
       </button>`;
     })
     .join("");
@@ -3536,27 +4173,214 @@ function nativeWorkerGraphMarkup(
   ]
     .map(
       (position) =>
-        `<i style="left:${Math.round((position.x / planeWidth) * 136)}px;top:${Math.round((position.y / planeHeight) * 70)}px"></i>`,
+        `<i data-native-minimap-x="${((position.x + workerWidth / 2) / planeWidth).toFixed(6)}" data-native-minimap-y="${((position.y + workerHeight / 2) / planeHeight).toFixed(6)}"></i>`,
     )
     .join("");
-  return `<section class="native-graph-shell" aria-label="${tr("持久化子 Agent 依赖图","Durable Worker dependency graph")}">
-    <div class="native-graph-scroll"><div class="native-graph-plane" style="width:${planeWidth}px;height:${planeHeight}px">
+  const graphKey = orchestrationGraphKey(plan);
+  const viewportKey = graphKey;
+  const viewportWasKnown = graphViewports.has(viewportKey);
+  const viewport = graphViewports.get(viewportKey) ?? {
+    x: 24,
+    y: 24,
+    scale: 1,
+    userAdjusted: false,
+  };
+  graphViewports.set(viewportKey, viewport);
+  return `<section class="native-graph-shell" data-native-graph-key="${escapeHtml(graphKey)}" data-native-viewport-key="${escapeHtml(viewportKey)}" data-native-needs-fit="${viewportWasKnown ? "false" : "true"}" aria-label="${tr("子 Agent 依赖图","Worker dependency graph")}">
+    <div class="native-graph-scroll" tabindex="0" aria-label="${tr("可拖动和缩放的编排画布","Pannable and zoomable orchestration canvas")}"><div class="native-graph-plane" data-plane-width="${planeWidth}" data-plane-height="${planeHeight}">
       ${phaseMarkup}
       <svg viewBox="0 0 ${planeWidth} ${planeHeight}" width="${planeWidth}" height="${planeHeight}" aria-hidden="true">${edges.map((edge) => `<path class="native-graph-edge ${edge.synthesis ? "synthesis" : ""}" d="${edge.path}"></path>`).join("")}</svg>
-      <button class="native-graph-node orchestrator" type="button" style="left:${orchestrator.x}px;top:${orchestrator.y}px" data-native-action="inspect-orchestration-node" data-orchestration-node="orchestrator">
+      <button class="native-graph-node orchestrator" type="button" data-native-x="${orchestrator.x}" data-native-y="${orchestrator.y}" data-native-action="inspect-orchestration-node" data-orchestration-node="orchestrator">
         <span class="native-graph-node-head"><span><span class="native-graph-node-id">${tr("编排器","ORCHESTRATOR")}</span><span class="native-graph-node-role">${tr("计划与调度","Plan & dispatch")}</span></span><span class="node-status">${plan.decision.kind==="multi_agent"?tr("多 Agent","MULTI-AGENT"):tr("单 Agent","SINGLE-AGENT")}</span></span>
-        <span class="native-graph-node-body">${escapeHtml(localizedModelProse(plan.decision.rationale,"已根据任务复杂度生成可执行编排。","Executable orchestration generated."))}${workerTagMarkup([plan.domainPack ?? tr("自动领域","auto-domain"), tr("用户约束","user constraints"), tr("模型池","model pool")])}</span>
+        <span class="native-graph-node-body">${escapeHtml(localizedModelProse(plan.decision.rationale,"已生成执行图。","Execution graph ready."))}</span>
         <span class="native-graph-node-foot"><span>${tr("蓝图","BLUEPRINT")}</span><span>${tr("图","GRAPH")} V${plan.version}</span></span>
       </button>
       ${workerNodes}
-      <button class="native-graph-node synthesis" type="button" style="left:${synthesis.x}px;top:${synthesis.y}px" data-native-action="inspect-orchestration-node" data-orchestration-node="synthesis">
+      <button class="native-graph-node synthesis" type="button" data-native-x="${synthesis.x}" data-native-y="${synthesis.y}" data-native-action="inspect-orchestration-node" data-orchestration-node="synthesis">
         <span class="native-graph-node-head"><span><span class="native-graph-node-id">${tr("编排器","ORCHESTRATOR")}</span><span class="native-graph-node-role">${tr("汇总","Synthesis")}</span></span><span class="node-status">${nativeOrchestrationResult ? escapeHtml(orchestrationStateLabel(nativeOrchestrationResult.verification.status==="verified"?"completed":"verifying")) : tr("等待","PENDING")}</span></span>
-        <span class="native-graph-node-body">${tr("汇总不可变交接物与独立验收记录。","Aggregate immutable handoffs and the independent verification record.")}${workerTagMarkup([tr("交接物","handoffs"),tr("证据","evidence")])}</span>
+        <span class="native-graph-node-body">${tr("整合结果并完成验收。","Integrate results and verify.")}</span>
         <span class="native-graph-node-foot"><span>${tr("汇总","SYNTHESIS")}</span><span>${tr("证据","EVIDENCE")}</span></span>
       </button>
     </div></div>
-    <div class="native-graph-minimap" aria-hidden="true">${minimapNodes}</div>
+    <button class="native-graph-minimap" type="button" aria-label="${tr("拖动缩略图定位画布","Drag minimap to navigate canvas")}">${minimapNodes}<span class="native-minimap-viewport"></span></button>
   </section>`;
+}
+
+function orchestrationGraphKey(plan: OrchestrationSession["plan"]): string {
+  const topology = plan.workers
+    .map(
+      (worker) =>
+        `${worker.workerId}>${[...worker.dependencies].sort().join(",")}`,
+    )
+    .join("|");
+  let hash = 2166136261;
+  for (const character of topology) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${plan.orchestrationId}:${plan.version}:${plan.workers.length}:${(hash >>> 0).toString(36)}`;
+}
+
+function activeOrchestrationPlan(): OrchestrationSession["plan"] | null {
+  const sessionPlan = nativeOrchestrationSession?.plan ?? null;
+  const projection = nativeProjectionPlan;
+  if (!sessionPlan) return projection;
+  if (!projection || projection.orchestrationId !== sessionPlan.orchestrationId) {
+    return sessionPlan;
+  }
+  if (projection.version > sessionPlan.version) return projection;
+  if (
+    projection.version === sessionPlan.version &&
+    projection.workers.length >= sessionPlan.workers.length
+  ) {
+    return projection;
+  }
+  return sessionPlan;
+}
+
+function activeGraphKey(): string | null {
+  return activeGraphShell()?.dataset.nativeViewportKey ?? null;
+}
+
+function graphViewport(key: string): GraphViewport {
+  const current = graphViewports.get(key);
+  const viewport =
+    current &&
+    Number.isFinite(current.x) &&
+    Number.isFinite(current.y) &&
+    Number.isFinite(current.scale) &&
+    current.scale > 0
+      ? current
+      : { x: 24, y: 24, scale: 1, userAdjusted: false };
+  graphViewports.set(key, viewport);
+  return viewport;
+}
+
+function activeGraphShell(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    "#nativeOrchestrationPlan .native-graph-shell",
+  );
+}
+
+function applyGraphGeometry(shell: HTMLElement): void {
+  const plane = shell.querySelector<HTMLElement>(".native-graph-plane");
+  if (!plane) return;
+  const planeWidth = Number(plane.dataset.planeWidth);
+  const planeHeight = Number(plane.dataset.planeHeight);
+  if (Number.isFinite(planeWidth) && planeWidth > 0) {
+    plane.style.width = `${planeWidth}px`;
+  }
+  if (Number.isFinite(planeHeight) && planeHeight > 0) {
+    plane.style.height = `${planeHeight}px`;
+  }
+  plane
+    .querySelectorAll<HTMLElement>(
+      ".native-graph-node[data-native-x][data-native-y]",
+    )
+    .forEach((node) => {
+      node.style.left = `${Number(node.dataset.nativeX) || 0}px`;
+      node.style.top = `${Number(node.dataset.nativeY) || 0}px`;
+    });
+  plane
+    .querySelectorAll<HTMLElement>(
+      ".native-graph-phase[data-native-x][data-native-y]",
+    )
+    .forEach((phase) => {
+      phase.style.left = `${Number(phase.dataset.nativeX) || 0}px`;
+      phase.style.top = `${Number(phase.dataset.nativeY) || 0}px`;
+      phase.style.width = `${Number(phase.dataset.nativeWidth) || 0}px`;
+      phase.style.height = `${Number(phase.dataset.nativeHeight) || 0}px`;
+    });
+}
+
+function observeGraphViewport(shell: HTMLElement): void {
+  graphResizeObserver?.disconnect();
+  graphResizeObserver = new ResizeObserver((entries) => {
+    const entry = entries[0];
+    if (!entry || entry.contentRect.width <= 0 || entry.contentRect.height <= 0) {
+      return;
+    }
+    const key = shell.dataset.nativeViewportKey;
+    if (!key || !shell.isConnected) return;
+    const viewport = graphViewport(key);
+    if (shell.dataset.nativeNeedsFit === "true" || !viewport.userAdjusted) {
+      shell.dataset.nativeNeedsFit = "false";
+      fitNativeGraph(false, shell);
+    } else {
+      applyGraphViewport(false, shell);
+    }
+  });
+  const graph = shell.querySelector<HTMLElement>(".native-graph-scroll");
+  if (graph) graphResizeObserver.observe(graph);
+}
+
+function applyGraphViewport(
+  animate = false,
+  shell = activeGraphShell(),
+): void {
+  const graph = shell?.querySelector<HTMLElement>(".native-graph-scroll");
+  const plane = shell?.querySelector<HTMLElement>(".native-graph-plane");
+  const key = shell?.dataset.nativeViewportKey;
+  if (!shell || !graph || !plane || !key) return;
+  applyGraphGeometry(shell);
+  const viewport = graphViewport(key);
+  viewport.scale = Math.max(0.12, Math.min(2, viewport.scale));
+  plane.classList.toggle("is-viewport-animating", animate);
+  plane.style.transform = `translate3d(${viewport.x}px,${viewport.y}px,0) scale(${viewport.scale})`;
+  graph.style.backgroundPosition = `${viewport.x}px ${viewport.y}px`;
+  document.querySelector<HTMLElement>("#nativeZoomLabel")!.textContent =
+    `${Math.round(viewport.scale * 100)}%`;
+  const minimap = shell.querySelector<HTMLElement>(".native-graph-minimap");
+  const indicator = minimap?.querySelector<HTMLElement>(".native-minimap-viewport");
+  const planeWidth = Number(plane.dataset.planeWidth) || plane.offsetWidth;
+  const planeHeight = Number(plane.dataset.planeHeight) || plane.offsetHeight;
+  if (minimap && indicator && planeWidth > 0 && planeHeight > 0) {
+    const minimapWidth = minimap.clientWidth;
+    const minimapHeight = minimap.clientHeight;
+    minimap
+      .querySelectorAll<HTMLElement>("i[data-native-minimap-x]")
+      .forEach((node) => {
+        node.style.left = `${(Number(node.dataset.nativeMinimapX) || 0) * minimapWidth}px`;
+        node.style.top = `${(Number(node.dataset.nativeMinimapY) || 0) * minimapHeight}px`;
+      });
+    const width = Math.min(
+      minimapWidth,
+      (graph.clientWidth / viewport.scale / planeWidth) * minimapWidth,
+    );
+    const height = Math.min(
+      minimapHeight,
+      (graph.clientHeight / viewport.scale / planeHeight) * minimapHeight,
+    );
+    indicator.style.width = `${Math.max(12, width)}px`;
+    indicator.style.height = `${Math.max(10, height)}px`;
+    indicator.style.left = `${Math.max(0, Math.min(minimapWidth - width, (-viewport.x / viewport.scale / planeWidth) * minimapWidth))}px`;
+    indicator.style.top = `${Math.max(0, Math.min(minimapHeight - height, (-viewport.y / viewport.scale / planeHeight) * minimapHeight))}px`;
+  }
+  if (animate) window.setTimeout(() => plane.classList.remove("is-viewport-animating"), 380);
+}
+
+function fitNativeGraph(
+  animate = true,
+  shell = activeGraphShell(),
+): void {
+  const graph = shell?.querySelector<HTMLElement>(".native-graph-scroll");
+  const plane = shell?.querySelector<HTMLElement>(".native-graph-plane");
+  const key = shell?.dataset.nativeViewportKey;
+  if (!graph || !plane || !key) return;
+  applyGraphGeometry(shell);
+  const planeWidth = Number(plane.dataset.planeWidth) || plane.offsetWidth;
+  const planeHeight = Number(plane.dataset.planeHeight) || plane.offsetHeight;
+  const scale = Math.max(
+    0.12,
+    Math.min(1.25, (graph.clientWidth - 48) / planeWidth, (graph.clientHeight - 48) / planeHeight),
+  );
+  graphViewports.set(key, {
+    scale,
+    x: (graph.clientWidth - planeWidth * scale) / 2,
+    y: (graph.clientHeight - planeHeight * scale) / 2,
+    userAdjusted: false,
+  });
+  applyGraphViewport(animate, shell);
 }
 
 function nativeOrchestrationMarkup(): string {
@@ -3603,31 +4427,33 @@ function nativeOrchestrationModeMarkup(
   session: OrchestrationSession | null,
 ): string {
   if (!session) {
-    return '<article class="provider-card"><span class="settings-help">Draft a durable graph in Blueprint before opening this control mode.</span></article>';
+    return `<article class="provider-card"><span class="settings-help">${tr("请先在蓝图中生成持久化编排图，再打开此控制视图。", "Draft a durable graph in Blueprint before opening this control view.")}</span></article>`;
   }
   const plan = session.plan;
   if (nativeOrchestrationMode === "runtime") {
-    return `<div class="pane-head"><div><strong>Runtime</strong><span class="settings-help">Durable Worker states from the native scheduler.</span></div><span class="mono">GRAPH V${plan.version}</span></div>
+    return `<div class="pane-head"><div><strong>${tr("运行状态", "Runtime")}</strong><span class="settings-help">${tr("由原生调度器持久化的子 Agent 状态。", "Durable Worker states from the native scheduler.")}</span></div><span class="mono">${tr("编排图", "GRAPH")} V${plan.version}</span></div>
       <div class="native-runtime-list">${plan.workers
         .map(
-          (worker) =>
-            `<button class="native-runtime-row" type="button" data-native-action="focus-orchestration-worker" data-orchestration-worker-index="${plan.workers.indexOf(worker)}"><span class="dot ${session.snapshot.workers[worker.workerId] ?? "draft"}"></span><span><strong>${escapeHtml(worker.role)}</strong><small>${escapeHtml(worker.task)}</small>${workerTagMarkup(worker.tags)}</span><span class="worker-runtime"><strong>${escapeHtml(session.snapshot.workers[worker.workerId] ?? "draft")}</strong><small>${worker.dependencies.length ? "waiting on dependency boundary" : "ready for dispatch"}</small></span></button>`,
+          (worker) => {
+            const state = session.snapshot.workers[worker.workerId] ?? "draft";
+            return `<button class="native-runtime-row" type="button" data-native-action="focus-orchestration-worker" data-orchestration-worker-index="${plan.workers.indexOf(worker)}"><span class="dot ${state}"></span><span><strong>${escapeHtml(worker.displayName || orchestrationRoleLabel(worker.role))}</strong><small>${escapeHtml(worker.task)}</small>${workerTagMarkup(worker.tags)}</span><span class="worker-runtime"><strong>${escapeHtml(orchestrationStateLabel(state))}</strong><small>${worker.dependencies.length ? tr("等待依赖交接", "Waiting on dependency handoff") : tr("可以派发", "Ready for dispatch")}</small></span></button>`;
+          },
         )
         .join("")}</div>`;
   }
   if (nativeOrchestrationMode === "queue") {
-    return `<div class="pane-head"><div><strong>Queue</strong><span class="settings-help">Dispatch order follows the durable dependency graph; concurrency remains capped at ${plan.maximumParallelWorkers}.</span></div><span class="mono">${plan.workers.length} WORKERS</span></div>
-      <div class="queue-columns"><section class="queue-column"><h3>Ready</h3>${plan.workers
+    return `<div class="pane-head"><div><strong>${tr("派发队列", "Queue")}</strong><span class="settings-help">${tr(`派发顺序遵循持久化依赖图；并行上限为 ${plan.maximumParallelWorkers}。`, `Dispatch follows the durable dependency graph; concurrency is capped at ${plan.maximumParallelWorkers}.`)}</span></div><span class="mono">${plan.workers.length} ${tr("个子 AGENT", "WORKERS")}</span></div>
+      <div class="queue-columns"><section class="queue-column"><h3>${tr("就绪", "Ready")}</h3>${plan.workers
         .filter((worker) => worker.dependencies.length === 0)
         .map(
           (worker) =>
-            `<div class="queue-card"><strong>${escapeHtml(worker.role)}</strong><span>${escapeHtml(worker.workerId)}</span>${workerTagMarkup(worker.tags)}</div>`,
+            `<div class="queue-card"><strong>${escapeHtml(worker.displayName || orchestrationRoleLabel(worker.role))}</strong><span>${escapeHtml(worker.workerId)}</span>${workerTagMarkup(worker.tags)}</div>`,
         )
-        .join("")}</section><section class="queue-column"><h3>Dependency-bound</h3>${plan.workers
+        .join("")}</section><section class="queue-column"><h3>${tr("等待依赖", "Dependency-bound")}</h3>${plan.workers
         .filter((worker) => worker.dependencies.length > 0)
         .map(
           (worker) =>
-            `<div class="queue-card"><strong>${escapeHtml(worker.role)}</strong><span>${escapeHtml(worker.dependencies.join(" → "))}</span>${workerTagMarkup(worker.tags)}</div>`,
+            `<div class="queue-card"><strong>${escapeHtml(worker.displayName || orchestrationRoleLabel(worker.role))}</strong><span>${escapeHtml(worker.dependencies.join(" → "))}</span>${workerTagMarkup(worker.tags)}</div>`,
         )
         .join("")}</section></div>`;
   }
@@ -3635,15 +4461,17 @@ function nativeOrchestrationModeMarkup(
     worker.dependencies.map((dependency) => ({
       from: dependency,
       to: worker.workerId,
-      payload: worker.inputContext.artifactIds.join(", ") || "structured output",
+      payload:
+        worker.inputContext.artifactIds.join(", ") ||
+        tr("结构化输出", "structured output"),
       status:
         session.snapshot.workers[worker.workerId] === "completed"
-          ? "consumed"
-          : "planned",
+          ? tr("已接收", "consumed")
+          : tr("已规划", "planned"),
     })),
   );
-  return `<div class="pane-head"><div><strong>Handoffs</strong><span class="settings-help">Immutable dependency and evidence boundaries.</span></div><span class="mono">${handoffs.length} EDGES</span></div>
-    <table class="table"><thead><tr><th>FROM</th><th>TO</th><th>PAYLOAD</th><th>STATUS</th></tr></thead><tbody>${handoffs
+  return `<div class="pane-head"><div><strong>${tr("交接", "Handoffs")}</strong><span class="settings-help">${tr("不可变的依赖与证据边界。", "Immutable dependency and evidence boundaries.")}</span></div><span class="mono">${handoffs.length} ${tr("条边", "EDGES")}</span></div>
+    <table class="table"><thead><tr><th>${tr("来源", "FROM")}</th><th>${tr("目标", "TO")}</th><th>${tr("内容", "PAYLOAD")}</th><th>${tr("状态", "STATUS")}</th></tr></thead><tbody>${handoffs
       .map(
         (handoff) =>
           `<tr><td class="mono">${escapeHtml(handoff.from)}</td><td class="mono">${escapeHtml(handoff.to)}</td><td>${escapeHtml(handoff.payload)}</td><td>${escapeHtml(handoff.status)}</td></tr>`,
@@ -3689,6 +4517,43 @@ function applyNativeOrchestrationMode(): void {
     );
 }
 
+function planningActivityMarkup(
+  activity: OrchestrationPlanningActivity,
+  draft = false,
+): string {
+  const workers = activity.draftWorkers
+    .map(
+      (worker) => `<article class="native-draft-node">
+        <small>${escapeHtml(worker.draftId)}</small>
+        <strong>${escapeHtml(worker.displayName)}</strong>
+        <span>${escapeHtml(worker.task)}</span>
+        <footer>${worker.parallelGroup ? `${tr("并行组", "Parallel group")} · ${escapeHtml(worker.parallelGroup)}` : tr("依赖调度", "Dependency scheduled")}${worker.dependencyDraftIds.length ? ` · ${tr("依赖", "Depends on")} ${escapeHtml(worker.dependencyDraftIds.join(", "))}` : ""}</footer>
+      </article>`,
+    )
+    .join("");
+  return `<section class="native-planning-activity ${draft ? "is-draft" : ""}">
+    <header><div><small>${tr("编排模型", "Orchestration Model")} · ${escapeHtml(activity.stage.replaceAll("_", " "))}</small><strong>${escapeHtml(activity.summary)}</strong></div><span>v${activity.draftVersion}</span></header>
+    ${workers ? `<div class="native-draft-grid">${workers}</div>` : ""}
+  </section>`;
+}
+
+function updateNativeGraphStates(states: Record<string, string>): void {
+  document
+    .querySelectorAll<HTMLElement>(".native-graph-node[data-native-worker-id]")
+    .forEach((node) => {
+      const workerId = node.dataset.nativeWorkerId ?? "";
+      const next = states[workerId] ?? "planned";
+      if (node.dataset.nativeWorkerState === next) return;
+      node.dataset.nativeWorkerState = next;
+      node.classList.toggle(
+        "is-running",
+        ["running_model", "running_tool", "verifying", "recovering", "retrying", "localizing", "repair_planning"].includes(next),
+      );
+      const status = node.querySelector<HTMLElement>("[data-native-worker-status]");
+      if (status) status.textContent = orchestrationStateLabel(next);
+    });
+}
+
 function renderNativeOrchestration(): void {
   window.lunaScopeUi?.setRuntimeProjection({
     plan: nativeProjectionPlan,
@@ -3702,14 +4567,42 @@ function renderNativeOrchestration(): void {
   if (!panel) return;
   const session = nativeOrchestrationSession;
   if (!session) {
-    panel.innerHTML =
-      `<article class="native-orch-empty"><strong>${tr("尚无编排图", "No orchestration graph yet")}</strong><span class="settings-help">${tr("回到项目对话并发送任务，Orchestration Model 会自动判断并生成单 Agent 或多 Agent 图。", "Return to the project conversation and send a request. The Orchestration Model will automatically create a single-agent or multi-agent graph.")}</span></article>`;
+    panel.innerHTML = nativePlanningDraft
+      ? planningActivityMarkup(nativePlanningDraft, true)
+      : `<article class="native-orch-empty"><strong>${tr("尚无编排图", "No orchestration graph yet")}</strong><span class="settings-help">${tr("回到项目对话并发送任务，Orchestration Model 会自动判断并生成单 Agent 或多 Agent 图。", "Return to the project conversation and send a request. The Orchestration Model will automatically create a single-agent or multi-agent graph.")}</span></article>`;
+    return;
+  }
+  const plan = activeOrchestrationPlan() ?? session.plan;
+  const graphKey = orchestrationGraphKey(plan);
+  const existingGraph = panel.querySelector<HTMLElement>(".native-graph-shell");
+  if (existingGraph?.dataset.nativeGraphKey === graphKey) {
+    updateNativeGraphStates(session.snapshot.workers);
+    applyGraphGeometry(existingGraph);
+    observeGraphViewport(existingGraph);
+    if (existingGraph.dataset.nativeNeedsFit === "true") {
+      existingGraph.dataset.nativeNeedsFit = "false";
+      fitNativeGraph(false, existingGraph);
+    } else {
+      applyGraphViewport(false, existingGraph);
+    }
     return;
   }
   panel.innerHTML = nativeWorkerGraphMarkup(
-    session.plan,
+    plan,
     session.snapshot.workers,
   );
+  window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+    const graph = panel.querySelector<HTMLElement>(".native-graph-shell");
+    if (!graph) return;
+    applyGraphGeometry(graph);
+    observeGraphViewport(graph);
+    if (graph?.dataset.nativeNeedsFit === "true") {
+      graph.dataset.nativeNeedsFit = "false";
+      fitNativeGraph(false, graph);
+    } else {
+      applyGraphViewport(false, graph);
+    }
+  }));
 }
 
 function renderNativeOrchestrationResult(): void {
@@ -3756,12 +4649,12 @@ function closeNativeInspector(): void {
 }
 
 function workerInspectorMarkup(worker: WorkerSpec, index: number): string {
-  const actionBar = `<div class="contextual-actions"><button class="primary-btn" type="button" data-native-action="patch-orchestration-worker" data-orchestration-worker-index="${index}">Apply user Patch</button><button class="text-btn" type="button" data-native-action="remove-orchestration-worker" data-orchestration-worker-index="${index}">Remove Draft Worker</button></div>`;
+  const actionBar = `<div class="contextual-actions"><button class="primary-btn" type="button" data-native-action="patch-orchestration-worker" data-orchestration-worker-index="${index}">${tr("应用用户变更", "Apply user patch")}</button><button class="text-btn" type="button" data-native-action="remove-orchestration-worker" data-orchestration-worker-index="${index}">${tr("移除草稿子 Agent", "Remove draft Worker")}</button></div>`;
   if (nativeInspectorTab === "prompt") {
-    return `${actionBar}<section class="inspect-section"><h3>WORKER PROMPT</h3><textarea class="textarea" id="orchPrompt${index}" style="min-height:360px">${escapeHtml(worker.prompt)}</textarea><label><input type="checkbox" id="orchLockPrompt${index}" ${worker.lockedFields.includes("prompt") ? "checked" : ""}> Lock Prompt</label></section>`;
+    return `${actionBar}<section class="inspect-section"><h3>${tr("子 AGENT 提示词", "WORKER PROMPT")}</h3><textarea class="textarea" id="orchPrompt${index}" style="min-height:360px">${escapeHtml(worker.prompt)}</textarea><label><input type="checkbox" id="orchLockPrompt${index}" ${worker.lockedFields.includes("prompt") ? "checked" : ""}> ${tr("锁定提示词", "Lock prompt")}</label></section>`;
   }
   if (nativeInspectorTab === "context") {
-    return `<section class="inspect-section"><h3>INPUT CONTEXT</h3><p>${escapeHtml(worker.inputContext.summary)}</p><dl class="definition"><div><dt>Workspace snapshot</dt><dd>${worker.inputContext.includeWorkspaceSnapshot ? "Included" : "Excluded"}</dd></div><div><dt>Dependencies</dt><dd>${escapeHtml(worker.dependencies.join(", ") || "none")}</dd></div></dl></section>`;
+    return `<section class="inspect-section"><h3>${tr("输入上下文", "INPUT CONTEXT")}</h3><p>${escapeHtml(worker.inputContext.summary)}</p><dl class="definition"><div><dt>${tr("工作区快照", "Workspace snapshot")}</dt><dd>${worker.inputContext.includeWorkspaceSnapshot ? tr("已包含", "Included") : tr("未包含", "Excluded")}</dd></div><div><dt>${tr("依赖", "Dependencies")}</dt><dd>${escapeHtml(worker.dependencies.join(", ") || tr("无", "none"))}</dd></div></dl></section>`;
   }
   if (nativeInspectorTab === "tools") {
     const options = providerConfigs
@@ -3771,27 +4664,28 @@ function workerInspectorMarkup(worker: WorkerSpec, index: number): string {
           `<option value="${escapeHtml(provider.id)}" ${provider.id === worker.model.provider ? "selected" : ""}>${escapeHtml(provider.displayName)}</option>`,
       )
       .join("");
-    return `${actionBar}<section class="inspect-section"><h3>MODEL, TOOLS &amp; SKILLS</h3><div class="field"><label>Provider</label><select class="select" id="orchProvider${index}">${options}</select></div><div class="field"><label>Model</label><input class="input" id="orchModel${index}" value="${escapeHtml(worker.model.model)}"></div><div class="field"><label>Tools · CSV</label><input class="input" id="orchTools${index}" value="${escapeHtml(worker.tools.join(", "))}"></div><div class="field"><label>Skills · CSV</label><input class="input" id="orchSkills${index}" value="${escapeHtml(worker.skills.join(", "))}"></div><div class="field"><label>Dependencies · CSV Worker IDs</label><input class="input" id="orchDependencies${index}" value="${escapeHtml(worker.dependencies.join(", "))}"></div><div class="field"><label>Write scopes · CSV</label><input class="input" id="orchWriteScopes${index}" value="${escapeHtml(worker.writeScopes.join(", "))}"></div></section>`;
+    return `${actionBar}<section class="inspect-section"><h3>${tr("模型、工具与技能", "MODEL, TOOLS & SKILLS")}</h3><div class="field"><label>${tr("提供商", "Provider")}</label><select class="select" id="orchProvider${index}">${options}</select></div><div class="field"><label>${tr("模型", "Model")}</label><input class="input" id="orchModel${index}" value="${escapeHtml(worker.model.model)}"></div><div class="field"><label>${tr("工具 · CSV", "Tools · CSV")}</label><input class="input" id="orchTools${index}" value="${escapeHtml(worker.tools.join(", "))}"></div><div class="field"><label>${tr("技能 · CSV", "Skills · CSV")}</label><input class="input" id="orchSkills${index}" value="${escapeHtml(worker.skills.join(", "))}"></div><div class="field"><label>${tr("依赖 · CSV 子 Agent ID", "Dependencies · CSV Worker IDs")}</label><input class="input" id="orchDependencies${index}" value="${escapeHtml(worker.dependencies.join(", "))}"></div><div class="field"><label>${tr("写入范围 · CSV", "Write scopes · CSV")}</label><input class="input" id="orchWriteScopes${index}" value="${escapeHtml(worker.writeScopes.join(", "))}"></div></section>`;
   }
   if (nativeInspectorTab === "permissions") {
-    return `${actionBar}<section class="inspect-section"><h3>PERMISSION POLICY</h3><div class="field"><label>Permissions · CSV</label><input class="input" id="orchPermissions${index}" value="${escapeHtml(worker.permissions.join(", "))}"></div><p class="settings-help">Agent permissions follow the conversation access mode. Rust hard-deny rules remain in force.</p></section>`;
+    return `${actionBar}<section class="inspect-section"><h3>${tr("权限策略", "PERMISSION POLICY")}</h3><div class="field"><label>${tr("权限 · CSV", "Permissions · CSV")}</label><input class="input" id="orchPermissions${index}" value="${escapeHtml(worker.permissions.join(", "))}"></div><p class="settings-help">${tr("Agent 权限遵循当前对话的电脑访问模式；Rust 强制拒绝规则始终有效。", "Agent permissions follow the conversation access mode; Rust hard-deny rules remain in force.")}</p></section>`;
   }
   if (nativeInspectorTab === "output") {
-    return `<section class="inspect-section"><h3>OUTPUT CONTRACT</h3><dl class="definition"><div><dt>Expected output</dt><dd>${escapeHtml(worker.expectedOutput)}</dd></div><div><dt>Media type</dt><dd>${escapeHtml(worker.outputSchema.mediaType)}</dd></div><div><dt>Criteria</dt><dd>${escapeHtml(worker.completionCriteria.join(" · "))}</dd></div></dl></section>`;
+    return `<section class="inspect-section"><h3>${tr("输出契约", "OUTPUT CONTRACT")}</h3><dl class="definition"><div><dt>${tr("预期输出", "Expected output")}</dt><dd>${escapeHtml(worker.expectedOutput)}</dd></div><div><dt>${tr("媒体类型", "Media type")}</dt><dd>${escapeHtml(worker.outputSchema.mediaType)}</dd></div><div><dt>${tr("完成标准", "Criteria")}</dt><dd>${escapeHtml(worker.completionCriteria.join(" · "))}</dd></div></dl></section>`;
   }
   if (nativeInspectorTab === "runtime") {
-    return `<section class="inspect-section"><h3>RUNTIME</h3><dl class="definition"><div><dt>State</dt><dd>${escapeHtml(nativeOrchestrationSession?.snapshot.workers[worker.workerId] ?? "draft")}</dd></div><div><dt>Timeout</dt><dd>${worker.timeoutMs} ms</dd></div><div><dt>Depth</dt><dd>${worker.depth}</dd></div></dl></section>`;
+    return `<section class="inspect-section"><h3>${tr("运行状态", "RUNTIME")}</h3><dl class="definition"><div><dt>${tr("状态", "State")}</dt><dd>${escapeHtml(orchestrationStateLabel(nativeOrchestrationSession?.snapshot.workers[worker.workerId] ?? "draft"))}</dd></div><div><dt>${tr("超时", "Timeout")}</dt><dd>${worker.timeoutMs} ms</dd></div><div><dt>${tr("深度", "Depth")}</dt><dd>${worker.depth}</dd></div></dl></section>`;
   }
   if (nativeInspectorTab === "history") {
-    return `<section class="inspect-section"><h3>CHANGE HISTORY</h3><p>Graph v${nativeOrchestrationSession?.plan.version ?? 1} · ${nativeOrchestrationSession?.plan.userOverrides.length ?? 0} user overrides.</p></section>`;
+    return `<section class="inspect-section"><h3>${tr("变更历史", "CHANGE HISTORY")}</h3><p>${tr("编排图", "Graph")} v${nativeOrchestrationSession?.plan.version ?? 1} · ${nativeOrchestrationSession?.plan.userOverrides.length ?? 0} ${tr("项用户变更", "user overrides")}。</p></section>`;
   }
-  return `${actionBar}<section class="inspect-section"><h3>WORKER SPEC</h3><div class="field"><label>Role</label><input class="input" id="orchRole${index}" list="nativeWorkerRoleCatalog" value="${escapeHtml(worker.role)}"></div><div class="field"><label>Labels · CSV</label><input class="input" id="orchTags${index}" value="${escapeHtml(worker.tags.join(", "))}"></div><div class="field"><label>Task</label><textarea class="textarea" id="orchTask${index}" style="min-height:140px">${escapeHtml(worker.task)}</textarea></div><div class="field"><label>Patch timing</label><select class="select" id="orchPatchMode${index}"><option value="apply_now">Apply now</option><option value="apply_after_current_step">After current step</option><option value="apply_on_retry">On retry</option><option value="clone_revision">Clone revision</option><option value="cancel">Cancel active run</option></select></div><div class="row"><label><input type="checkbox" id="orchLockRole${index}" ${worker.lockedFields.includes("role") ? "checked" : ""}> Lock Role</label><label><input type="checkbox" id="orchLockTags${index}" ${worker.lockedFields.includes("tags") ? "checked" : ""}> Lock Labels</label></div></section>`;
+  return `${actionBar}<section class="inspect-section"><h3>${tr("子 AGENT 规格", "WORKER SPEC")}</h3><div class="field"><label>${tr("职责", "Role")}</label><input class="input" id="orchRole${index}" value="${escapeHtml(worker.role)}"></div><div class="field"><label>${tr("标签 · CSV", "Labels · CSV")}</label><input class="input" id="orchTags${index}" value="${escapeHtml(worker.tags.join(", "))}"></div><div class="field"><label>${tr("任务", "Task")}</label><textarea class="textarea" id="orchTask${index}" style="min-height:140px">${escapeHtml(worker.task)}</textarea></div><div class="field"><label>${tr("变更时机", "Patch timing")}</label><select class="select" id="orchPatchMode${index}"><option value="apply_now">${tr("立即应用", "Apply now")}</option><option value="apply_after_current_step">${tr("当前步骤后应用", "After current step")}</option><option value="apply_on_retry">${tr("重试时应用", "On retry")}</option><option value="clone_revision">${tr("克隆修订版", "Clone revision")}</option><option value="cancel">${tr("取消当前运行", "Cancel active run")}</option></select></div><div class="row"><label><input type="checkbox" id="orchLockRole${index}" ${worker.lockedFields.includes("role") ? "checked" : ""}> ${tr("锁定职责", "Lock role")}</label><label><input type="checkbox" id="orchLockTags${index}" ${worker.lockedFields.includes("tags") ? "checked" : ""}> ${tr("锁定标签", "Lock labels")}</label></div></section>`;
 }
 
 function renderNativeInspector(): void {
   const inspector = nativeInspector;
   const session = nativeOrchestrationSession;
   if (!inspector || !session) return;
+  const plan = activeOrchestrationPlan() ?? session.plan;
   const app = document.querySelector("#app");
   const review = document.querySelector<HTMLElement>("#review");
   const title = document.querySelector<HTMLElement>("#reviewTitle");
@@ -3802,9 +4696,9 @@ function renderNativeInspector(): void {
   review.setAttribute("aria-hidden", "false");
   if (inspector.kind === "worker") {
     const index = inspector.workerIndex ?? 0;
-    const worker = session.plan.workers[index];
+    const worker = plan.workers[index];
     if (!worker) return;
-    title.textContent = `${worker.workerId} · Worker Inspector`;
+    title.textContent = `${worker.workerId} · ${tr("子 Agent 检查器", "Worker Inspector")}`;
     const names = [
       "overview",
       "prompt",
@@ -3817,32 +4711,52 @@ function renderNativeInspector(): void {
     ];
     tabs.innerHTML = names
       .map(
-        (name) =>
-          `<button class="${nativeInspectorTab === name ? "active" : ""}" type="button" data-native-action="native-inspector-tab" data-inspector-tab="${name}">${name[0].toUpperCase() + name.slice(1)}</button>`,
+        (name) => {
+          const labels: Record<string, [string, string]> = {
+            overview: ["概览", "Overview"],
+            prompt: ["提示词", "Prompt"],
+            context: ["上下文", "Context"],
+            tools: ["工具", "Tools"],
+            permissions: ["权限", "Permissions"],
+            output: ["输出", "Output"],
+            runtime: ["运行", "Runtime"],
+            history: ["历史", "History"],
+          };
+          const label = labels[name] ?? [name, name];
+          return `<button class="${nativeInspectorTab === name ? "active" : ""}" type="button" data-native-action="native-inspector-tab" data-inspector-tab="${name}">${tr(label[0], label[1])}</button>`;
+        },
       )
       .join("");
     body.innerHTML = workerInspectorMarkup(worker, index);
     return;
   }
   if (inspector.kind === "orchestrator") {
-    title.textContent = "Orchestrator Inspector";
+    title.textContent = tr("编排模型检查器", "Orchestrator Inspector");
     tabs.innerHTML = ["overview", "plan", "runtime", "history"]
       .map(
-        (name) =>
-          `<button class="${nativeInspectorTab === name ? "active" : ""}" type="button" data-native-action="native-inspector-tab" data-inspector-tab="${name}">${name[0].toUpperCase() + name.slice(1)}</button>`,
+        (name) => {
+          const labels: Record<string, [string, string]> = {
+            overview: ["概览", "Overview"],
+            plan: ["计划", "Plan"],
+            runtime: ["运行", "Runtime"],
+            history: ["历史", "History"],
+          };
+          const label = labels[name] ?? [name, name];
+          return `<button class="${nativeInspectorTab === name ? "active" : ""}" type="button" data-native-action="native-inspector-tab" data-inspector-tab="${name}">${tr(label[0], label[1])}</button>`;
+        },
       )
       .join("");
     const cancellation = nativeOrchestrationRunning
-      ? '<div class="contextual-actions"><button class="ghost-btn" type="button" data-native-action="cancel-native-orchestration">Cancel</button></div>'
+      ? `<div class="contextual-actions"><button class="ghost-btn" type="button" data-native-action="cancel-native-orchestration">${tr("取消", "Cancel")}</button></div>`
       : "";
-    body.innerHTML = `${cancellation}<section class="inspect-section"><h3>${nativeInspectorTab.toUpperCase()}</h3><dl class="definition"><div><dt>Decision</dt><dd>${escapeHtml(session.plan.decision.kind)}</dd></div><div><dt>Rationale</dt><dd>${escapeHtml(session.plan.decision.rationale)}</dd></div><div><dt>Benefit</dt><dd>${escapeHtml(session.plan.decision.expectedBenefit)}</dd></div><div><dt>Graph</dt><dd>v${session.plan.version} · ${session.plan.workers.length} Workers</dd></div><div><dt>Model pool</dt><dd>${escapeHtml(session.plan.allowedWorkerModels.map((model) => `${model.provider}/${model.model}`).join(" · "))}</dd></div></dl></section>`;
+    body.innerHTML = `${cancellation}<section class="inspect-section"><h3>${tr("编排详情", "ORCHESTRATION DETAILS")}</h3><dl class="definition"><div><dt>${tr("决策", "Decision")}</dt><dd>${escapeHtml(session.plan.decision.kind)}</dd></div><div><dt>${tr("依据", "Rationale")}</dt><dd>${escapeHtml(session.plan.decision.rationale)}</dd></div><div><dt>${tr("预期收益", "Benefit")}</dt><dd>${escapeHtml(session.plan.decision.expectedBenefit)}</dd></div><div><dt>${tr("编排图", "Graph")}</dt><dd>v${session.plan.version} · ${session.plan.workers.length} ${tr("个子 Agent", "Workers")}</dd></div><div><dt>${tr("模型池", "Model pool")}</dt><dd>${escapeHtml(session.plan.allowedWorkerModels.map((model) => `${model.provider}/${model.model}`).join(" · "))}</dd></div></dl></section>`;
     return;
   }
-  title.textContent = "Synthesis Inspector";
-  tabs.innerHTML = `<button class="active" type="button">Overview</button>`;
+  title.textContent = tr("交付检查器", "Synthesis Inspector");
+  tabs.innerHTML = `<button class="active" type="button">${tr("概览", "Overview")}</button>`;
   body.innerHTML = nativeOrchestrationResult
-    ? `<section class="inspect-section"><h3>VERIFICATION</h3><p>${escapeHtml(nativeOrchestrationResult.synthesis)}</p><dl class="definition"><div><dt>Status</dt><dd>${escapeHtml(nativeOrchestrationResult.verification.status)}</dd></div><div><dt>Evidence</dt><dd>${escapeHtml(nativeOrchestrationResult.verification.evidence.join(" · ") || "none")}</dd></div><div><dt>Remaining risks</dt><dd>${escapeHtml(nativeOrchestrationResult.verification.remainingRisks.join(" · ") || "none")}</dd></div></dl></section>`
-    : `<section class="inspect-section"><h3>SYNTHESIS</h3><p>No Worker result has been synthesized yet.</p></section>`;
+    ? `<section class="inspect-section"><h3>${tr("验收", "VERIFICATION")}</h3><p>${escapeHtml(nativeOrchestrationResult.synthesis)}</p><dl class="definition"><div><dt>${tr("状态", "Status")}</dt><dd>${escapeHtml(nativeOrchestrationResult.verification.status)}</dd></div><div><dt>${tr("证据", "Evidence")}</dt><dd>${escapeHtml(nativeOrchestrationResult.verification.evidence.join(" · ") || tr("无", "none"))}</dd></div><div><dt>${tr("剩余风险", "Remaining risks")}</dt><dd>${escapeHtml(nativeOrchestrationResult.verification.remainingRisks.join(" · ") || tr("无", "none"))}</dd></div></dl></section>`
+    : `<section class="inspect-section"><h3>${tr("交付汇总", "SYNTHESIS")}</h3><p>${tr("尚未生成子 Agent 结果汇总。", "No Worker result has been synthesized yet.")}</p></section>`;
 }
 
 function renderSkillCatalog(): void {
@@ -3851,14 +4765,13 @@ function renderSkillCatalog(): void {
   if (count) count.textContent = String(skillSummaries.length);
   if (!list) return;
   if (!skillSummaries.length) {
-    list.innerHTML =
-      '<article class="provider-card"><span class="settings-help">当前扫描根下未发现 SKILL.md。</span></article>';
+    list.innerHTML = `<article class="provider-card"><span class="settings-help">${tr("当前扫描根下未发现 SKILL.md。", "No SKILL.md was found under the current scan roots.")}</span></article>`;
     return;
   }
   list.innerHTML = skillSummaries
     .map(
       (skill, index) =>
-        `<article class="provider-card"><header><div><strong>${escapeHtml(skill.name)}</strong><small>${escapeHtml(skill.description)}</small><small>${escapeHtml(skill.source)} · ${escapeHtml(skill.compatibility)} · ~${skill.approximateContextTokens} tokens · ${escapeHtml(skill.path)}</small><small>Tools: ${escapeHtml(skill.requiredTools.join(", ") || "none")} · Permissions: ${escapeHtml(skill.requiredPermissions.join(", ") || "none")}</small>${skill.warnings.length ? `<small style="color:var(--orange)">Warnings: ${escapeHtml(skill.warnings.join("; "))}</small>` : ""}</div><span class="status ${skill.compatibility === "unsupported" ? "failed" : skill.compatibility === "bridge_required" ? "waiting" : "complete"}">${escapeHtml(skill.compatibility)}</span></header><div class="row" style="margin-top:10px"><button class="ghost-btn" type="button" data-native-action="load-skill" data-skill-index="${index}">按需加载正文</button><button class="text-btn" type="button" data-native-action="route-with-skill" data-skill-index="${index}">用于路由预览</button></div></article>`,
+        `<article class="provider-card"><header><div><strong>${escapeHtml(skill.name)}</strong><small>${escapeHtml(skill.description)}</small><small>${escapeHtml(skill.source)} · ${escapeHtml(skill.compatibility)} · ~${skill.approximateContextTokens} ${tr("个 token", "tokens")} · ${escapeHtml(skill.path)}</small><small>${tr("工具", "Tools")}: ${escapeHtml(skill.requiredTools.join(", ") || tr("无", "none"))} · ${tr("权限", "Permissions")}: ${escapeHtml(skill.requiredPermissions.join(", ") || tr("无", "none"))}</small>${skill.warnings.length ? `<small style="color:var(--orange)">${tr("警告", "Warnings")}: ${escapeHtml(skill.warnings.join("; "))}</small>` : ""}</div><span class="status ${skill.compatibility === "unsupported" ? "failed" : skill.compatibility === "bridge_required" ? "waiting" : "complete"}">${escapeHtml(skill.compatibility)}</span></header><div class="row" style="margin-top:10px"><button class="ghost-btn" type="button" data-native-action="load-skill" data-skill-index="${index}">${tr("按需加载正文", "Load content on demand")}</button><button class="text-btn" type="button" data-native-action="route-with-skill" data-skill-index="${index}">${tr("用于路由预览", "Use in routing preview")}</button></div></article>`,
     )
     .join("");
 }
@@ -3867,8 +4780,7 @@ function renderGithubImportPreview(): void {
   const panel = document.querySelector<HTMLElement>("#githubImportPreview");
   if (!panel) return;
   if (!githubImportPreview) {
-    panel.innerHTML =
-      '<span class="settings-help">No repository has been downloaded.</span>';
+    panel.innerHTML = `<span class="settings-help">${tr("尚未下载任何仓库。", "No repository has been downloaded.")}</span>`;
     return;
   }
   const preview = githubImportPreview;
@@ -3878,8 +4790,8 @@ function renderGithubImportPreview(): void {
       (component) => `<label class="provider-card" style="display:block">
         <input type="checkbox" data-import-component-id="${escapeHtml(component.id)}" ${preview.blocked ? "disabled" : ""}>
         <strong>${escapeHtml(component.displayName)}</strong>
-        <small>${escapeHtml(component.kind)} · ${escapeHtml(component.compatibility)} · ${escapeHtml(component.pathPrefix || "(repository root)")}</small>
-        <small>Permissions: ${escapeHtml(component.requestedPermissions.join(", ") || "none")}</small>
+        <small>${escapeHtml(component.kind)} · ${escapeHtml(component.compatibility)} · ${escapeHtml(component.pathPrefix || tr("（仓库根目录）", "(repository root)"))}</small>
+        <small>${tr("权限", "Permissions")}: ${escapeHtml(component.requestedPermissions.join(", ") || tr("无", "none"))}</small>
         ${component.warnings.length ? `<small style="color:var(--orange)">${escapeHtml(component.warnings.join("; "))}</small>` : ""}
       </label>`,
     )
@@ -3888,7 +4800,7 @@ function renderGithubImportPreview(): void {
     .slice(0, 30)
     .map(
       (file) =>
-        `${file.path} · ${file.risks.join(", ")}${file.extractable ? "" : " · excluded"}`,
+        `${file.path} · ${file.risks.join(", ")}${file.extractable ? "" : ` · ${tr("已排除", "excluded")}`}`,
     )
     .join("\n");
   const permissionPreview = preview.permissionRequests
@@ -3896,17 +4808,17 @@ function renderGithubImportPreview(): void {
     .join("\n");
   panel.innerHTML = `<article class="provider-card" style="margin-top:10px">
     <header><div><strong>${escapeHtml(preview.source.owner)}/${escapeHtml(preview.source.repository)}</strong>
-      <small>PINNED COMMIT · ${escapeHtml(preview.commitSha)}</small>
-      <small>Content SHA-256 · ${escapeHtml(preview.contentSha256)}</small>
-      <small>Subdirectory · ${escapeHtml(preview.source.subdirectory ?? "(repository root)")} · ${preview.files.length} files</small>
-      <small>License · ${escapeHtml(preview.license.spdxId ?? preview.license.status)}${preview.license.filePath ? ` · ${escapeHtml(preview.license.filePath)}` : ""}</small>
-      <small>Quarantine · ${escapeHtml(preview.quarantinePath)}</small>
-    </div><span class="status ${preview.blocked ? "failed" : riskyFiles.length ? "waiting" : "complete"}">${preview.blocked ? "BLOCKED" : "INSPECTED"}</span></header>
+      <small>${tr("固定提交", "PINNED COMMIT")} · ${escapeHtml(preview.commitSha)}</small>
+      <small>${tr("内容", "Content")} SHA-256 · ${escapeHtml(preview.contentSha256)}</small>
+      <small>${tr("子目录", "Subdirectory")} · ${escapeHtml(preview.source.subdirectory ?? tr("（仓库根目录）", "(repository root)"))} · ${preview.files.length} ${tr("个文件", "files")}</small>
+      <small>${tr("许可证", "License")} · ${escapeHtml(preview.license.spdxId ?? preview.license.status)}${preview.license.filePath ? ` · ${escapeHtml(preview.license.filePath)}` : ""}</small>
+      <small>${tr("隔离目录", "Quarantine")} · ${escapeHtml(preview.quarantinePath)}</small>
+    </div><span class="status ${preview.blocked ? "failed" : riskyFiles.length ? "waiting" : "complete"}">${preview.blocked ? tr("已阻止", "BLOCKED") : tr("已检查", "INSPECTED")}</span></header>
     ${preview.warnings.length ? `<div class="routing-review" style="margin-top:10px">${escapeHtml(preview.warnings.join("\n"))}</div>` : ""}
-    <div class="pane-head" style="padding-inline:0;margin-top:12px"><strong>Select components</strong><span class="mono">${preview.components.length}</span></div>
+    <div class="pane-head" style="padding-inline:0;margin-top:12px"><strong>${tr("选择组件", "Select components")}</strong><span class="mono">${preview.components.length}</span></div>
     <div>${components}</div>
-    <div class="routing-review" style="margin-top:10px">Permission preview\n${escapeHtml(permissionPreview || "none")}\n\nRisk findings (${riskyFiles.length})\n${escapeHtml(findings || "none")}${riskyFiles.length > 30 ? `\n… ${riskyFiles.length - 30} more` : ""}</div>
-    <div class="row" style="margin-top:10px"><button class="primary-btn" type="button" data-native-action="install-github-import" ${preview.blocked ? "disabled" : ""}>Approve selected install</button></div>
+    <div class="routing-review" style="margin-top:10px">${tr("权限预览", "Permission preview")}\n${escapeHtml(permissionPreview || tr("无", "none"))}\n\n${tr("风险发现", "Risk findings")} (${riskyFiles.length})\n${escapeHtml(findings || tr("无", "none"))}${riskyFiles.length > 30 ? `\n… ${riskyFiles.length - 30} ${tr("项更多", "more")}` : ""}</div>
+    <div class="row" style="margin-top:10px"><button class="primary-btn" type="button" data-native-action="install-github-import" ${preview.blocked ? "disabled" : ""}>${tr("批准安装所选组件", "Approve selected install")}</button></div>
   </article>`;
 }
 
@@ -3914,8 +4826,7 @@ function renderInstalledImports(): void {
   const list = document.querySelector<HTMLElement>("#installedImportList");
   if (!list) return;
   if (!installedImportVersions.length) {
-    list.innerHTML =
-      '<article class="provider-card"><span class="settings-help">No approved import versions are installed.</span></article>';
+    list.innerHTML = `<article class="provider-card"><span class="settings-help">${tr("尚未安装已批准的导入版本。", "No approved import versions are installed.")}</span></article>`;
     return;
   }
   list.innerHTML = installedImportVersions
@@ -3924,10 +4835,10 @@ function renderInstalledImports(): void {
         <header><div><strong>${escapeHtml(version.source.owner)}/${escapeHtml(version.source.repository)}</strong>
           <small>${escapeHtml(version.commitSha)} · ${escapeHtml(version.installedAt)}</small>
           <small>${escapeHtml(version.installedPath)} · ${escapeHtml(version.componentIds.join(", "))}</small>
-        </div><span class="status ${version.active ? "complete" : "waiting"}">${version.active ? "ACTIVE" : "ROLLBACK"}</span></header>
+        </div><span class="status ${version.active ? "complete" : "waiting"}">${version.active ? tr("当前版本", "ACTIVE") : tr("可回滚", "ROLLBACK")}</span></header>
         <div class="row" style="margin-top:8px">
-          ${!version.active ? `<button class="ghost-btn" type="button" data-native-action="rollback-import" data-import-version-index="${index}">Restore this version</button>` : ""}
-          ${version.active && githubImportPreview ? `<button class="ghost-btn" type="button" data-native-action="compare-import" data-import-version-index="${index}">Compare with quarantine</button>` : ""}
+          ${!version.active ? `<button class="ghost-btn" type="button" data-native-action="rollback-import" data-import-version-index="${index}">${tr("恢复此版本", "Restore this version")}</button>` : ""}
+          ${version.active && githubImportPreview ? `<button class="ghost-btn" type="button" data-native-action="compare-import" data-import-version-index="${index}">${tr("与隔离版本比较", "Compare with quarantine")}</button>` : ""}
         </div>
       </article>`,
     )
@@ -3970,8 +4881,7 @@ function renderMcpServerList(): void {
   const list = document.querySelector<HTMLElement>("#mcpServerList");
   if (!list) return;
   if (!mcpServerConfigs.length) {
-    list.innerHTML =
-      '<article class="provider-card"><span class="settings-help">尚未保存 MCP Server。</span></article>';
+    list.innerHTML = `<article class="provider-card"><span class="settings-help">${tr("尚未保存 MCP 服务器。", "No MCP server has been saved.")}</span></article>`;
     return;
   }
   list.innerHTML = mcpServerConfigs
@@ -3997,7 +4907,7 @@ function renderMcpServerList(): void {
             `<button class="text-btn" style="margin-top:8px" type="button" data-native-action="delete-mcp-credential" data-mcp-index="${index}" data-mcp-reference="${escapeHtml(reference)}">删除凭据 ${escapeHtml(reference)}</button>`,
         )
         .join("");
-      return `<article class="provider-card"><header><div><strong>${escapeHtml(config.name)}</strong><small>${escapeHtml(config.id)} · ${escapeHtml(config.transport.kind)} · ${escapeHtml(target)}</small><small>Timeout ${config.timeoutMs} ms · 密钥值不存数据库且不回显</small></div><span class="status ${config.enabled ? "complete" : "waiting"}">${config.enabled ? "Enabled" : "Disabled"}</span></header><div class="row" style="margin-top:10px"><button class="ghost-btn" type="button" data-native-action="edit-mcp" data-mcp-index="${index}">载入编辑</button><button class="ghost-btn" type="button" data-native-action="test-mcp" data-mcp-index="${index}">审批并测试</button><button class="text-btn" type="button" data-native-action="delete-mcp" data-mcp-index="${index}">删除配置</button></div>${credentialButtons}<div id="mcpStatus${index}"></div></article>`;
+      return `<article class="provider-card"><header><div><strong>${escapeHtml(config.name)}</strong><small>${escapeHtml(config.id)} · ${escapeHtml(config.transport.kind)} · ${escapeHtml(target)}</small><small>${tr("超时", "Timeout")} ${config.timeoutMs} ms · ${tr("密钥值不存数据库且不回显", "Secret values are neither stored in the database nor displayed")}</small></div><span class="status ${config.enabled ? "complete" : "waiting"}">${config.enabled ? tr("已启用", "Enabled") : tr("已禁用", "Disabled")}</span></header><div class="row" style="margin-top:10px"><button class="ghost-btn" type="button" data-native-action="edit-mcp" data-mcp-index="${index}">${tr("载入编辑", "Load for editing")}</button><button class="ghost-btn" type="button" data-native-action="test-mcp" data-mcp-index="${index}">${tr("批准并测试", "Approve and test")}</button><button class="text-btn" type="button" data-native-action="delete-mcp" data-mcp-index="${index}">${tr("删除配置", "Delete configuration")}</button></div>${credentialButtons}<div id="mcpStatus${index}"></div></article>`;
     })
     .join("");
 }
@@ -4136,14 +5046,14 @@ function populateMcpServerForm(config: McpServerConfig): void {
   if (secret) secret.value = "";
   setSettingsStatus(
     "mcpActionStatus",
-    `已载入 ${config.name}；Secret 保持为空。`,
+    tr(`已载入 ${config.name}；密钥保持为空。`, `Loaded ${config.name}; the secret remains empty.`),
   );
 }
 
 function renderLoadedSkill(loaded: LoadedSkill): void {
   const detail = document.querySelector<HTMLElement>("#loadedSkillDetail");
   if (!detail) return;
-  detail.innerHTML = `<article class="provider-card" style="margin-top:12px"><header><div><strong>Loaded on demand · ${escapeHtml(loaded.summary.name)}</strong><small>${escapeHtml(loaded.summary.compatibility)} · SHA-256 ${escapeHtml(loaded.summary.contentSha256)}</small><small>Supporting files: ${escapeHtml(loaded.supportingFiles.join(", ") || "none")}</small></div></header><pre class="diff" style="max-height:320px;overflow:auto;margin-top:10px">${escapeHtml(loaded.instructions)}</pre></article>`;
+  detail.innerHTML = `<article class="provider-card" style="margin-top:12px"><header><div><strong>${tr("按需加载", "Loaded on demand")} · ${escapeHtml(loaded.summary.name)}</strong><small>${escapeHtml(loaded.summary.compatibility)} · SHA-256 ${escapeHtml(loaded.summary.contentSha256)}</small><small>${tr("辅助文件", "Supporting files")}: ${escapeHtml(loaded.supportingFiles.join(", ") || tr("无", "none"))}</small></div></header><pre class="diff" style="max-height:320px;overflow:auto;margin-top:10px">${escapeHtml(loaded.instructions)}</pre></article>`;
 }
 
 function renderMcpStatus(index: number, status: McpServerStatus): void {
@@ -4156,26 +5066,26 @@ function renderMcpStatus(index: number, status: McpServerStatus): void {
         `<button class="ghost-btn" type="button" data-native-action="invoke-mcp" data-mcp-index="${index}" data-mcp-tool-index="${toolIndex}">${escapeHtml(tool.name)}</button>`,
     )
     .join("");
-  element.innerHTML = `<div class="routing-review" style="margin-top:10px">${escapeHtml(status.serverName ?? status.serverConfigId)} ${escapeHtml(status.serverVersion ?? "")}\nTools (${status.tools.length}): ${escapeHtml(status.tools.map((tool) => tool.name).join(", ") || "none")}</div>${status.tools.length ? `<div class="field" style="margin-top:8px"><label for="mcpInvokeArgs${index}">Tool arguments（JSON object）</label><textarea class="textarea" id="mcpInvokeArgs${index}" spellcheck="false" style="min-height:58px">{}</textarea></div><div class="row">${toolButtons}</div><div id="mcpInvokeResult${index}"></div>` : ""}`;
+  element.innerHTML = `<div class="routing-review" style="margin-top:10px">${escapeHtml(status.serverName ?? status.serverConfigId)} ${escapeHtml(status.serverVersion ?? "")}\n${tr("工具", "Tools")} (${status.tools.length}): ${escapeHtml(status.tools.map((tool) => tool.name).join(", ") || tr("无", "none"))}</div>${status.tools.length ? `<div class="field" style="margin-top:8px"><label for="mcpInvokeArgs${index}">${tr("工具参数（JSON 对象）", "Tool arguments (JSON object)")}</label><textarea class="textarea" id="mcpInvokeArgs${index}" spellcheck="false" style="min-height:58px">{}</textarea></div><div class="row">${toolButtons}</div><div id="mcpInvokeResult${index}"></div>` : ""}`;
 }
 
 function renderToolRoutingDecision(decision: ToolRoutingDecision): void {
   const result = document.querySelector<HTMLElement>("#toolRoutingResult");
   if (!result) return;
   const selected =
-    decision.selectedTools.map((tool) => `✓ ${tool.id}`).join("\n") || "none";
+    decision.selectedTools.map((tool) => `✓ ${tool.id}`).join("\n") || tr("无", "none");
   const approvals =
     decision.approvalRequests
       .map(
         (request) =>
           `? ${request.permission} · ${request.context.toolId ?? request.action}`,
       )
-      .join("\n") || "none";
+      .join("\n") || tr("无", "none");
   const rejected =
     decision.rejections
       .map((item) => `× ${item.toolId} · ${item.reason}`)
-      .join("\n") || "none";
-  result.innerHTML = `<div class="routing-review">${escapeHtml(decision.rationale)}\n\nAllowed\n${escapeHtml(selected)}\n\nApproval required\n${escapeHtml(approvals)}\n\nRejected\n${escapeHtml(rejected)}</div>`;
+      .join("\n") || tr("无", "none");
+  result.innerHTML = `<div class="routing-review">${escapeHtml(decision.rationale)}\n\n${tr("已允许", "Allowed")}\n${escapeHtml(selected)}\n\n${tr("需要批准", "Approval required")}\n${escapeHtml(approvals)}\n\n${tr("已拒绝", "Rejected")}\n${escapeHtml(rejected)}</div>`;
 }
 
 function showSettingsPage(page: string, button: HTMLButtonElement): void {
@@ -4203,9 +5113,9 @@ function showSettingsPage(page: string, button: HTMLButtonElement): void {
   } else if (page === "ultranote") {
     panel.innerHTML = ultraNoteSettingsMarkup();
   } else {
-    panel.innerHTML =
-      '<div class="pane-head" style="padding-inline:0"><strong>Settings</strong></div><span class="settings-help">此设置域将在对应运行时里程碑接入。</span>';
+    panel.innerHTML = `<div class="pane-head" style="padding-inline:0"><strong>${tr("设置", "Settings")}</strong></div><span class="settings-help">${tr("此设置域将在对应运行时里程碑接入。", "This settings area will be connected in its runtime milestone.")}</span>`;
   }
+  refreshCustomControls(panel);
 }
 
 function hydrateSettingsRoute(): void {
@@ -4239,8 +5149,14 @@ async function invokeWithAllowOnce<T>(
       bypassMode ||
       computerAccessMode === "self_approve" ||
       computerAccessMode === "full_access";
-    if (!automatic && !window.confirm(`${confirmation}\n\n${message}`)) {
-      throw new Error("用户未授予本次操作权限");
+    if (!automatic) {
+      const accepted = await requestConfirmation({
+        title: tr("需要本次授权", "Permission required"),
+        message: `${confirmation}\n\n${message}`,
+        confirmLabel: tr("允许本次", "Allow once"),
+        cancelLabel: tr("取消", "Cancel"),
+      });
+      if (!accepted) throw new Error("用户未授予本次操作权限");
     }
     return invoke<T>(command, { ...args, allowOnce: true });
   }
@@ -4342,20 +5258,22 @@ async function handleNativeSettingsAction(
     return;
   }
   if (action === "native-orchestration-layout") {
+    const key = activeGraphKey();
+    if (key) graphViewports.delete(key);
     renderNativeOrchestration();
+    queueMicrotask(() => fitNativeGraph());
     setSettingsStatus(
       "nativeOrchestrationStatus",
-      "Auto Layout reapplied from the durable dependency graph.",
+      tr("已根据持久化依赖图重新布局。", "Auto Layout reapplied from the durable dependency graph."),
       "success",
     );
     return;
   }
   if (action === "native-orchestration-fit") {
-    const graph = document.querySelector<HTMLElement>(".native-graph-scroll");
-    graph?.scrollTo({ left: 0, top: 0, behavior: "smooth" });
+    fitNativeGraph();
     setSettingsStatus(
       "nativeOrchestrationStatus",
-      "Blueprint returned to its fitted origin.",
+      tr("编排图已适应当前视图。", "Blueprint fitted to the current view."),
       "success",
     );
     return;
@@ -4491,6 +5409,7 @@ async function handleNativeSettingsAction(
           data: {
             patch: {
               workerId: worker.workerId,
+              displayName: null,
               role: nextRole,
               tags: csv(`orchTags${index}`, worker.tags),
               objective: null,
@@ -4510,12 +5429,16 @@ async function handleNativeSettingsAction(
                   : evidenceOutputSchema()
                 : null,
               completionCriteria: null,
+              ownedAcceptanceCriteria: null,
+              parallelGroup: null,
               model: {
                 provider: value(`orchProvider${index}`, worker.model.provider),
                 model: value(`orchModel${index}`, worker.model.model),
                 reason:
                   "User-selected and locked to the allowed Worker Model Pool.",
                 fallback: false,
+                reasoningEffort: worker.model.reasoningEffort,
+                customReasoningEffort: worker.model.customReasoningEffort,
               },
               skills: csv(`orchSkills${index}`, worker.skills),
               tools: csv(`orchTools${index}`, worker.tools),
@@ -4639,6 +5562,8 @@ async function handleNativeSettingsAction(
       model,
       reason: "User added this Worker from the allowed model pool.",
       fallback: false,
+      reasoningEffort: source.model.reasoningEffort,
+      customReasoningEffort: source.model.customReasoningEffort,
     };
     spec.tools = assignment.readOnly
       ? ["filesystem.read"]
@@ -4958,9 +5883,16 @@ async function handleNativeSettingsAction(
     const config = mcpServerConfigs[Number(button.dataset.mcpIndex)];
     if (
       !config ||
-      !window.confirm(
-        `删除 ${config.name} 的配置元数据？Windows Credential Manager 中的 Secret 不会被静默删除。`,
-      )
+      !(await requestConfirmation({
+        title: tr("删除 MCP 配置", "Delete MCP configuration"),
+        message: tr(
+          `删除 ${config.name} 的配置元数据？Windows Credential Manager 中的密钥不会被静默删除。`,
+          `Delete the configuration metadata for ${config.name}? Its Windows Credential Manager secret will be kept.`,
+        ),
+        confirmLabel: tr("删除配置", "Delete configuration"),
+        cancelLabel: tr("取消", "Cancel"),
+        danger: true,
+      }))
     ) {
       return;
     }
@@ -5036,9 +5968,16 @@ async function handleNativeSettingsAction(
     if (
       !config ||
       !referenceId ||
-      !window.confirm(
-        `从 Windows Credential Manager 删除 ${config.name} 的凭据 ${referenceId}？配置引用将保留。`,
-      )
+      !(await requestConfirmation({
+        title: tr("删除 MCP 凭据", "Delete MCP credential"),
+        message: tr(
+          `从 Windows Credential Manager 删除 ${config.name} 的凭据 ${referenceId}？配置引用将保留。`,
+          `Delete credential ${referenceId} for ${config.name} from Windows Credential Manager? The configuration reference will remain.`,
+        ),
+        confirmLabel: tr("删除凭据", "Delete credential"),
+        cancelLabel: tr("取消", "Cancel"),
+        danger: true,
+      }))
     ) {
       return;
     }
@@ -5119,6 +6058,100 @@ async function handleNativeSettingsAction(
     if (config) populateProviderForm(config);
     return;
   }
+  if (action === "test-model-effort") {
+    const scope = button.dataset.modelTestScope;
+    const row = button.closest<HTMLElement>("[data-worker-model-row]");
+    const providerConfigId =
+      scope === "worker"
+        ? (row?.querySelector<HTMLInputElement>("[data-worker-provider]")
+            ?.value.trim() ?? "")
+        : inputValue(scope === "vision" ? "visionProvider" : "orchestrationProvider");
+    const model =
+      scope === "worker"
+        ? (row?.querySelector<HTMLInputElement>("[data-worker-model]")
+            ?.value.trim() ?? "")
+        : inputValue(scope === "vision" ? "visionModel" : "orchestrationModel");
+    const customReasoningEffort =
+      scope === "worker"
+        ? (row?.querySelector<HTMLInputElement>("[data-worker-custom-effort]")
+            ?.value.trim() ?? "")
+        : inputValue(
+            scope === "vision"
+              ? "visionCustomEffort"
+              : "orchestrationCustomEffort",
+          );
+    const inlineStatus =
+      button
+        .closest<HTMLElement>(".field")
+        ?.querySelector<HTMLElement>("[data-model-test-status]") ??
+      row?.querySelector<HTMLElement>("[data-model-test-status]");
+    const report = (
+      message: string,
+      kind: "idle" | "success" | "error" = "idle",
+    ): void => {
+      if (inlineStatus) {
+        inlineStatus.textContent = message;
+        inlineStatus.className = `settings-help ${kind === "idle" ? "" : kind}`;
+      } else {
+        setSettingsStatus("modelSettingsStatus", message, kind);
+      }
+    };
+    const idleButtonLabel = button.textContent ?? tr("真实测试", "Run real test");
+    try {
+      if (!providerConfigs.some((provider) => provider.enabled && provider.id === providerConfigId)) {
+        throw new Error(
+          tr(
+            "请先保存并启用对应的提供商配置。",
+            "Save and enable the provider configuration first.",
+          ),
+        );
+      }
+      button.disabled = true;
+      button.textContent = tr("测试中…", "Testing…");
+      report(
+        tr(
+          `正在真实测试 ${model} 与当前思考强度…`,
+          `Testing ${model} with the current reasoning effort…`,
+        ),
+      );
+      const result = await invoke<{
+        responseId: string | null;
+        text: string;
+        inputTokens: number | null;
+        outputTokens: number | null;
+      }>("test_model_reasoning_config", {
+        providerConfigId,
+        model,
+        customReasoningEffort: customReasoningEffort || null,
+      });
+      report(
+        tr(
+          `模型与思考强度可用 · ${result.inputTokens ?? "?"}/${result.outputTokens ?? "?"} tokens`,
+          `Model and reasoning effort are available · ${result.inputTokens ?? "?"}/${result.outputTokens ?? "?"} tokens`,
+        ),
+        "success",
+      );
+    } catch (error) {
+      const message = errorMessage(error);
+      const aclFailure = message.includes("not allowed by ACL");
+      report(
+        aclFailure
+          ? tr(
+              `LunaScope 应用权限配置错误：${message}`,
+              `LunaScope application permission error: ${message}`,
+            )
+          : tr(
+              `模型或思考强度不可用：${message}`,
+              `Model or reasoning effort is unavailable: ${message}`,
+            ),
+        "error",
+      );
+    } finally {
+      button.disabled = false;
+      button.textContent = idleButtonLabel;
+    }
+    return;
+  }
   if (action === "save-model-settings") {
     try {
       const settings = readModelSelectionSettings();
@@ -5129,13 +6162,29 @@ async function handleNativeSettingsAction(
       modelSelectionSettings = settings;
       setSettingsStatus(
         "modelSettingsStatus",
-        "Orchestration Model 与 Worker Model Pool 已分开持久化。",
+        tr(
+          "模型分工与已测试的思考强度已保存。",
+          "Model assignments and tested reasoning efforts were saved.",
+        ),
         "success",
       );
     } catch (error) {
+      const message = errorMessage(error);
+      const testRequired = message.startsWith("MODEL_REASONING_TEST_REQUIRED:");
+      const detail = testRequired
+        ? message.slice("MODEL_REASONING_TEST_REQUIRED:".length)
+        : message;
       setSettingsStatus(
         "modelSettingsStatus",
-        `保存模型分工失败：${errorMessage(error)}`,
+        testRequired
+          ? tr(
+              `保存前请逐项真实测试以下模型与强度：${detail}`,
+              `Run a successful real test for every model and effort before saving: ${detail}`,
+            )
+          : tr(
+              `保存模型分工失败：${detail}`,
+              `Failed to save model assignments: ${detail}`,
+            ),
         "error",
       );
     }
@@ -5167,11 +6216,16 @@ async function handleNativeSettingsAction(
   if (action === "delete-credential") {
     const config = providerConfigs[Number(button.dataset.providerIndex)];
     if (!config) return;
-    if (
-      !window.confirm(
+    if (!(await requestConfirmation({
+      title: tr("删除模型凭据", "Delete model credential"),
+      message: tr(
         `删除 ${config.displayName} 的 Windows Credential Manager 凭据？配置元数据将保留。`,
-      )
-    ) {
+        `Delete the Windows Credential Manager credential for ${config.displayName}? Configuration metadata will remain.`,
+      ),
+      confirmLabel: tr("删除凭据", "Delete credential"),
+      cancelLabel: tr("取消", "Cancel"),
+      danger: true,
+    }))) {
       return;
     }
     try {
@@ -5290,11 +6344,44 @@ async function handleNativeSettingsAction(
 }
 
 function bindNativeSettings(): void {
+  window.addEventListener("lunascope:runtime-control", (event) => {
+    const action = event instanceof CustomEvent
+      ? String((event.detail as { action?: unknown } | null)?.action ?? "")
+      : "";
+    if (action === "toggle-pause") {
+      void setNativeRunPaused(!nativeOrchestrationPaused).catch((error) => {
+        window.lunaScopeUi?.appendConversationEvent({
+          type: "assistant_message",
+          title: "LunaScope",
+          summary: `${tr("运行控制失败：", "Run control failed: ")}${errorMessage(error)}`,
+        });
+      });
+      return;
+    }
+    if (action === "cancel") {
+      document
+        .querySelector<HTMLButtonElement>('[data-native-run-control="cancel"]')
+        ?.click();
+    }
+  });
   document.addEventListener(
     "click",
     (event) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
+      if (target.closest("#nativeSlashMenuBackdrop")) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        closeSlashMenu();
+        return;
+      }
+      if (
+        document.querySelector("#nativeSlashMenu") &&
+        !target.closest("#nativeSlashMenu") &&
+        !target.closest('[data-composer="command"]')
+      ) {
+        closeSlashMenu();
+      }
       const runControl = target.closest<HTMLElement>(
         "[data-native-run-control]",
       );
@@ -5311,8 +6398,25 @@ function bindNativeSettings(): void {
           });
         } else if (runControl.dataset.nativeRunControl === "cancel") {
           nativeOrchestrationPaused = false;
+          nativeRunPhase = "cancelling";
+          renderNativeRunControls();
+          window.lunaScopeUi?.setGlobalThinkingState(null);
+          window.lunaScopeUi?.appendConversationEvent({
+            id: `cancellation-${activeConversationRunId ?? "active"}`,
+            type: "assistant_commentary",
+            title: tr("LunaScope · 正在取消", "LunaScope · Cancelling"),
+            summary: tr(
+              "已收到取消请求。正在停止规划、模型调用和工具进程；已完成的文件与上下文会保留，且不会触发自动修复。",
+              "Cancellation requested. Planning, model calls, and tool processes are stopping; completed files and context are preserved, and automatic repair will not restart the run.",
+            ),
+          });
           void invoke<boolean>("cancel_native_orchestration")
-            .then(() => {
+            .then((cancelled) => {
+              if (!cancelled) {
+                throw new Error(
+                  tr("当前没有可取消的运行。", "There is no active run to cancel."),
+                );
+              }
               setExecutionActivity({
                 running: true,
                 workerId: null,
@@ -5325,6 +6429,9 @@ function bindNativeSettings(): void {
               });
             })
             .catch((error) => {
+              nativeRunPhase = nativeOrchestrationRunning ? "running" : "idle";
+              renderNativeRunControls();
+              syncGlobalModelLifecycle();
               window.lunaScopeUi?.appendConversationEvent({
                 type: "assistant_message",
                 title: "LunaScope",
@@ -5346,9 +6453,11 @@ function bindNativeSettings(): void {
             ?.querySelector(".thread-main strong")?.textContent?.trim() ||
           tr("此对话", "this conversation");
         void deleteConversationById(threadId, title).catch((error) => {
-          window.alert(
-            `${tr("删除对话失败：", "Failed to delete conversation: ")}${errorMessage(error)}`,
-          );
+          void showNotice({
+            title: tr("删除失败", "Delete failed"),
+            message: `${tr("删除对话失败：", "Failed to delete conversation: ")}${errorMessage(error)}`,
+            confirmLabel: tr("知道了", "Got it"),
+          });
         });
         return;
       }
@@ -5362,12 +6471,14 @@ function bindNativeSettings(): void {
           nativeOrchestrationRunning &&
           nextThreadId !== activeConversationThreadId
         ) {
-          window.alert(
-            tr(
+          void showNotice({
+            title: tr("暂时无法切换", "Cannot switch yet"),
+            message: tr(
               "Agent 运行期间不能切换对话。请先等待完成或停止运行。",
               "You cannot switch conversations while Agents are running. Wait for completion or stop the run first.",
             ),
-          );
+            confirmLabel: tr("知道了", "Got it"),
+          });
           return;
         }
         const reference = window.lunaScopeUi?.activateConversation(
@@ -5484,12 +6595,16 @@ function bindNativeSettings(): void {
       event.stopImmediatePropagation();
       const value = input.value.trim();
       if (!value) return;
+      if (nativeOrchestrationRunning && nativeRunPhase !== "running") {
+        return;
+      }
       if (value.startsWith("/") && handleSlashCommand(value)) {
         input.value = "";
         return;
       }
       input.value = "";
       void submitConversation(value).catch((error) => {
+        if (!input.value.trim()) input.value = value;
         window.lunaScopeUi?.appendConversationEvent({
           id: "orchestration-thinking",
           type: "assistant_message",
@@ -5500,9 +6615,179 @@ function bindNativeSettings(): void {
     },
     true,
   );
+  document.addEventListener("pointerdown", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const projectThumb = target.closest<HTMLElement>("#nativeProjectScrollThumb");
+    if (projectThumb) {
+      const scroll = document.querySelector<HTMLElement>("#nativeProjectListScroll");
+      if (!scroll) return;
+      projectScrollbarDrag = {
+        pointerId: event.pointerId,
+        startY: event.clientY,
+        startScrollTop: scroll.scrollTop,
+      };
+      projectThumb.setPointerCapture(event.pointerId);
+      projectThumb.classList.add("is-dragging");
+      event.preventDefault();
+      return;
+    }
+    const projectTrack = target.closest<HTMLElement>("#nativeProjectScrollTrack");
+    if (projectTrack) {
+      const scroll = document.querySelector<HTMLElement>("#nativeProjectListScroll");
+      const thumb = document.querySelector<HTMLElement>("#nativeProjectScrollThumb");
+      if (!scroll || !thumb) return;
+      const bounds = projectTrack.getBoundingClientRect();
+      const ratio = Math.max(
+        0,
+        Math.min(1, (event.clientY - bounds.top) / bounds.height),
+      );
+      scroll.scrollTo({
+        top: ratio * Math.max(0, scroll.scrollHeight - scroll.clientHeight),
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+      });
+      event.preventDefault();
+      return;
+    }
+    const shell = target.closest<HTMLElement>(".native-graph-shell");
+    const graph = shell?.querySelector<HTMLElement>(".native-graph-scroll");
+    const key = shell?.dataset.nativeViewportKey;
+    if (!shell || !graph || !key) return;
+    const minimap = target.closest<HTMLElement>(".native-graph-minimap");
+    if (minimap) {
+      const plane = shell.querySelector<HTMLElement>(".native-graph-plane");
+      if (!plane) return;
+      const bounds = minimap.getBoundingClientRect();
+      const planeWidth = Number(plane.dataset.planeWidth) || plane.offsetWidth;
+      const planeHeight = Number(plane.dataset.planeHeight) || plane.offsetHeight;
+      const viewport = graphViewport(key);
+      const worldX = ((event.clientX - bounds.left) / bounds.width) * planeWidth;
+      const worldY = ((event.clientY - bounds.top) / bounds.height) * planeHeight;
+      viewport.x = graph.clientWidth / 2 - worldX * viewport.scale;
+      viewport.y = graph.clientHeight / 2 - worldY * viewport.scale;
+      viewport.userAdjusted = true;
+      applyGraphViewport(false, shell);
+      event.preventDefault();
+      return;
+    }
+    if (event.button !== 0 && event.button !== 1) return;
+    if (target.closest(".native-graph-node")) return;
+    const viewport = graphViewport(key);
+    viewport.userAdjusted = true;
+    graphDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: viewport.x,
+      originY: viewport.y,
+    };
+    graph.setPointerCapture(event.pointerId);
+    graph.classList.add("is-panning");
+    event.preventDefault();
+  });
+  document.addEventListener("pointermove", (event) => {
+    if (projectScrollbarDrag?.pointerId === event.pointerId) {
+      const scroll = document.querySelector<HTMLElement>("#nativeProjectListScroll");
+      const track = document.querySelector<HTMLElement>("#nativeProjectScrollTrack");
+      const thumb = document.querySelector<HTMLElement>("#nativeProjectScrollThumb");
+      if (!scroll || !track || !thumb) return;
+      const availableTravel = Math.max(1, track.clientHeight - thumb.offsetHeight);
+      const maximumScroll = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+      scroll.scrollTop =
+        projectScrollbarDrag.startScrollTop +
+        ((event.clientY - projectScrollbarDrag.startY) / availableTravel) *
+          maximumScroll;
+      return;
+    }
+    if (!graphDrag || graphDrag.pointerId !== event.pointerId) return;
+    const shell = activeGraphShell();
+    const graph = shell?.querySelector<HTMLElement>(".native-graph-scroll");
+    const key = shell?.dataset.nativeViewportKey ?? null;
+    if (!graph || !key) return;
+    const viewport = graphViewport(key);
+    viewport.x = graphDrag.originX + event.clientX - graphDrag.startX;
+    viewport.y = graphDrag.originY + event.clientY - graphDrag.startY;
+    viewport.userAdjusted = true;
+    applyGraphViewport(false, shell);
+  });
+  const endGraphDrag = (event: PointerEvent) => {
+    if (projectScrollbarDrag?.pointerId === event.pointerId) {
+      const thumb = document.querySelector<HTMLElement>("#nativeProjectScrollThumb");
+      if (thumb?.hasPointerCapture(event.pointerId)) {
+        thumb.releasePointerCapture(event.pointerId);
+      }
+      thumb?.classList.remove("is-dragging");
+      projectScrollbarDrag = null;
+      return;
+    }
+    if (!graphDrag || graphDrag.pointerId !== event.pointerId) return;
+    const graph = document.querySelector<HTMLElement>(".native-graph-scroll");
+    if (graph?.hasPointerCapture(event.pointerId)) graph.releasePointerCapture(event.pointerId);
+    graph?.classList.remove("is-panning");
+    graphDrag = null;
+  };
+  document.addEventListener("pointerup", endGraphDrag);
+  document.addEventListener("pointercancel", endGraphDrag);
+  document.addEventListener(
+    "scroll",
+    (event) => {
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.id === "nativeProjectListScroll"
+      ) {
+        syncProjectListScrollbar();
+      }
+    },
+    true,
+  );
+  document.addEventListener(
+    "wheel",
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const graph = target.closest<HTMLElement>(".native-graph-scroll");
+      const key = graph?.closest<HTMLElement>(".native-graph-shell")?.dataset.nativeViewportKey;
+      if (!graph || !key) return;
+      event.preventDefault();
+      const bounds = graph.getBoundingClientRect();
+      const viewport = graphViewport(key);
+      const previous = viewport.scale;
+      const next = Math.max(0.12, Math.min(2, previous * Math.exp(-event.deltaY * 0.0015)));
+      const cursorX = event.clientX - bounds.left;
+      const cursorY = event.clientY - bounds.top;
+      const worldX = (cursorX - viewport.x) / previous;
+      const worldY = (cursorY - viewport.y) / previous;
+      viewport.scale = next;
+      viewport.x = cursorX - worldX * next;
+      viewport.y = cursorY - worldY * next;
+      viewport.userAdjusted = true;
+      applyGraphViewport(
+        false,
+        graph.closest<HTMLElement>(".native-graph-shell"),
+      );
+    },
+    { passive: false },
+  );
+  document.addEventListener("dblclick", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest(".native-graph-scroll") && !target.closest(".native-graph-node")) {
+      event.preventDefault();
+      fitNativeGraph();
+    }
+  });
   document.addEventListener(
     "keydown",
     (event) => {
+      if (event.key === "Escape" && document.querySelector("#nativeSlashMenu")) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        closeSlashMenu();
+        document.querySelector<HTMLTextAreaElement>("#composerInput")?.focus();
+        return;
+      }
       if (
         event.key !== "Enter" ||
         event.shiftKey ||
@@ -5603,6 +6888,41 @@ function bindNativeSettings(): void {
       );
       if (tags) tags.value = tagsForRole(target.value.trim()).join(", ");
       return;
+    }
+    if (target instanceof HTMLInputElement) {
+      if (
+        [
+          "orchestrationProvider",
+          "orchestrationModel",
+          "orchestrationCustomEffort",
+          "visionProvider",
+          "visionModel",
+          "visionCustomEffort",
+        ].includes(target.id)
+      ) {
+        setSettingsStatus(
+          "modelSettingsStatus",
+          tr(
+            "模型或思考强度已变更；请先真实测试，再保存。",
+            "The model or reasoning effort changed. Run a real test before saving.",
+          ),
+        );
+        return;
+      }
+      const row = target.closest<HTMLElement>("[data-worker-model-row]");
+      if (
+        row &&
+        target.matches(
+          "[data-worker-provider], [data-worker-model], [data-worker-custom-effort]",
+        )
+      ) {
+        const status = row.querySelector<HTMLElement>("[data-model-test-status]");
+        if (status) {
+          status.textContent = tr("已变更，请重新测试。", "Changed; run the test again.");
+          status.className = "settings-help";
+        }
+        return;
+      }
     }
     if (!(target instanceof HTMLSelectElement)) {
       return;
@@ -5717,6 +7037,7 @@ function bindNativeSettings(): void {
       const input = document.querySelector<HTMLInputElement>(`#${id}`);
       if (input) input.checked = checked;
     }
+    refreshCustomControls(document);
   });
   document.addEventListener("submit", (event) => {
     const form = event.target;
@@ -5804,7 +7125,42 @@ function bindNativeSettings(): void {
   }
 }
 
+function bindWindowChrome(): void {
+  const tauriWindow = isTauri();
+  document.documentElement.dataset.tauriWindow = String(tauriWindow);
+  if (!tauriWindow) return;
+  const appWindow = getCurrentWindow();
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const action = target.closest<HTMLButtonElement>("[data-window-action]")
+      ?.dataset.windowAction;
+    if (!action) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const operation = action === "minimize"
+      ? appWindow.minimize()
+      : action === "maximize"
+        ? appWindow.toggleMaximize()
+        : appWindow.close();
+    void operation.catch((error) => {
+      console.error(`Window action ${action} failed`, error);
+    });
+  }, true);
+  document.querySelector<HTMLElement>(".global-header")?.addEventListener(
+    "dblclick",
+    (event) => {
+      if (event.target instanceof Element && event.target.closest("button")) return;
+      void appWindow.toggleMaximize().catch((error) => {
+        console.error("Window maximize toggle failed", error);
+      });
+    },
+  );
+}
+
 async function bootNativeRuntime(): Promise<void> {
+  bindWindowChrome();
+  installCustomControls();
   bindNativeSettings();
   loadAccessSettings();
   applyAccessSettings();
@@ -5828,6 +7184,7 @@ async function bootNativeRuntime(): Promise<void> {
   });
   projects = await invoke<LunaProject[]>("list_projects");
   activeProjectId = projects[0]?.projectId ?? null;
+  await hydrateDurableConversationThreads();
   applyActiveConversationReference(
     window.lunaScopeUi?.activeConversation() ?? null,
     true,

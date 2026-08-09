@@ -763,10 +763,9 @@ fn path_is_in_scope(path: &str, scope: &str) -> bool {
 fn resolve_git() -> Result<PathBuf, WorktreeError> {
     let system_root =
         PathBuf::from(std::env::var_os("SystemRoot").ok_or(WorktreeError::MissingSystemRoot)?);
-    let output = Command::new(system_root.join("System32").join("where.exe"))
-        .arg("$PATH:git.exe")
-        .stdin(Stdio::null())
-        .output()?;
+    let mut command = Command::new(system_root.join("System32").join("where.exe"));
+    crate::hide_console_window(&mut command);
+    let output = command.arg("$PATH:git.exe").stdin(Stdio::null()).output()?;
     if !output.status.success() {
         return Err(WorktreeError::GitNotFound);
     }

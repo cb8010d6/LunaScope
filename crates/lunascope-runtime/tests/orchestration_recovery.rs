@@ -82,6 +82,7 @@ fn worker_graph_and_user_locked_patch_survive_database_reopen() {
         operations: vec![OrchestrationPatchOperation::UpdateWorker {
             patch: WorkerPatch {
                 worker_id: worker_id.clone(),
+                display_name: None,
                 role: None,
                 tags: Some(vec!["user-owned".into()]),
                 objective: None,
@@ -91,6 +92,8 @@ fn worker_graph_and_user_locked_patch_survive_database_reopen() {
                 expected_output: None,
                 output_schema: None,
                 completion_criteria: None,
+                owned_acceptance_criteria: None,
+                parallel_group: None,
                 model: None,
                 skills: None,
                 tools: None,

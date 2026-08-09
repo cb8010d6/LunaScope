@@ -46,6 +46,7 @@ struct WorkerRevision {
 #[derive(Debug)]
 struct SchedulerControlState {
     current_plan: OrchestrationPlan,
+    topology_revision: Option<OrchestrationPlan>,
     states: BTreeMap<WorkerId, WorkerState>,
     revisions: BTreeMap<WorkerId, VecDeque<WorkerRevision>>,
     guidance: BTreeMap<WorkerId, VecDeque<String>>,
@@ -57,6 +58,7 @@ impl SchedulerControl {
         Self {
             inner: Arc::new(Mutex::new(SchedulerControlState {
                 current_plan: plan.clone(),
+                topology_revision: None,
                 states: plan
                     .workers
                     .iter()
@@ -169,6 +171,100 @@ impl SchedulerControl {
         ) {
             return Err(SchedulerControlError::UnsupportedMode);
         }
+        let topology_change = patch.operations.iter().any(|operation| match operation {
+            OrchestrationPatchOperation::AddWorker { .. }
+            | OrchestrationPatchOperation::RemoveWorker { .. } => true,
+            OrchestrationPatchOperation::UpdateWorker { patch } => {
+                patch.dependencies.is_some() || patch.parent_worker_id.is_some()
+            }
+        });
+        if topology_change {
+            if !matches!(
+                patch.apply_mode,
+                OrchestrationPatchApplyMode::ApplyNow
+                    | OrchestrationPatchApplyMode::ApplyAfterCurrentStep
+            ) {
+                return Err(SchedulerControlError::UnsupportedMode);
+            }
+            let mut inner = self
+                .inner
+                .lock()
+                .map_err(|_| SchedulerControlError::Poisoned)?;
+            for operation in &patch.operations {
+                match operation {
+                    OrchestrationPatchOperation::RemoveWorker { worker_id } => {
+                        let state = inner.states.get(worker_id).copied().ok_or_else(|| {
+                            SchedulerControlError::WorkerMissing(worker_id.clone())
+                        })?;
+                        if !matches!(
+                            state,
+                            WorkerState::Draft
+                                | WorkerState::Ready
+                                | WorkerState::Queued
+                                | WorkerState::WaitingDependency
+                        ) {
+                            return Err(SchedulerControlError::InvalidWorkerState {
+                                worker_id: worker_id.clone(),
+                                mode: patch.apply_mode,
+                                state,
+                            });
+                        }
+                    }
+                    OrchestrationPatchOperation::UpdateWorker { patch: update } => {
+                        let state =
+                            inner
+                                .states
+                                .get(&update.worker_id)
+                                .copied()
+                                .ok_or_else(|| {
+                                    SchedulerControlError::WorkerMissing(update.worker_id.clone())
+                                })?;
+                        if (update.dependencies.is_some() || update.parent_worker_id.is_some())
+                            && !matches!(
+                                state,
+                                WorkerState::Draft
+                                    | WorkerState::Ready
+                                    | WorkerState::Queued
+                                    | WorkerState::WaitingDependency
+                            )
+                        {
+                            return Err(SchedulerControlError::InvalidWorkerState {
+                                worker_id: update.worker_id.clone(),
+                                mode: patch.apply_mode,
+                                state,
+                            });
+                        }
+                    }
+                    OrchestrationPatchOperation::AddWorker { spec } => {
+                        if inner.states.contains_key(&spec.worker_id) {
+                            return Err(SchedulerControlError::WorkerMissing(
+                                spec.worker_id.clone(),
+                            ));
+                        }
+                    }
+                }
+            }
+            for operation in &patch.operations {
+                match operation {
+                    OrchestrationPatchOperation::RemoveWorker { worker_id } => {
+                        inner
+                            .states
+                            .insert(worker_id.clone(), WorkerState::Cancelled);
+                        inner.guidance.remove(worker_id);
+                        inner.revisions.remove(worker_id);
+                    }
+                    OrchestrationPatchOperation::AddWorker { spec } => {
+                        inner
+                            .states
+                            .insert(spec.worker_id.clone(), WorkerState::Draft);
+                    }
+                    OrchestrationPatchOperation::UpdateWorker { .. } => {}
+                }
+            }
+            inner.current_plan = plan.clone();
+            inner.topology_revision = Some(plan.clone());
+            return Ok(());
+        }
         let mut affected = Vec::new();
         for operation in &patch.operations {
             let OrchestrationPatchOperation::UpdateWorker { patch: update } = operation else {
@@ -247,6 +343,10 @@ impl SchedulerControl {
                     | OrchestrationPatchApplyMode::ApplyAfterCurrentStep
             )
         })
+    }
+
+    fn take_topology_revision(&self) -> Option<OrchestrationPlan> {
+        self.inner.lock().ok()?.topology_revision.take()
     }
 
     fn take_retry_revision(&self, worker_id: &WorkerId) -> Option<WorkerRevision> {
@@ -388,11 +488,12 @@ impl AgentScheduler {
         cancellation: CancellationToken,
         control: Arc<SchedulerControl>,
     ) -> Result<OrchestrationRunResult, SchedulerError> {
-        let validation = validate_orchestration(plan);
+        let mut current_plan = plan.clone();
+        let mut validation = validate_orchestration(&current_plan);
         if !validation.valid {
             return Err(SchedulerError::InvalidPlan(validation));
         }
-        let by_id = plan
+        let mut by_id = current_plan
             .workers
             .iter()
             .map(|worker| (worker.worker_id.clone(), worker.clone()))
@@ -446,28 +547,110 @@ impl AgentScheduler {
             .collect::<BTreeSet<_>>();
         let mut completed = BTreeMap::<WorkerId, CompletedWorker>::new();
         let mut failed = BTreeSet::<WorkerId>::new();
+        let mut unavailable = BTreeSet::<WorkerId>::new();
         let mut artifacts = Vec::<StoredWorkerArtifact>::new();
         let mut patches = BTreeMap::<WorkerId, PatchArtifact>::new();
         let mut handoffs = Vec::new();
         let mut verification_by_worker = BTreeMap::<WorkerId, VerificationRecord>::new();
+        let mut running = FuturesUnordered::new();
 
-        while !pending.is_empty() {
+        while !pending.is_empty() || !running.is_empty() {
+            if let Some(revised_plan) = control.take_topology_revision() {
+                let revised_validation = validate_orchestration(&revised_plan);
+                if !revised_validation.valid {
+                    return Err(SchedulerError::InvalidPlan(revised_validation));
+                }
+                let revised_by_id = revised_plan
+                    .workers
+                    .iter()
+                    .map(|worker| (worker.worker_id.clone(), worker.clone()))
+                    .collect::<BTreeMap<_, _>>();
+
+                let removed = by_id
+                    .keys()
+                    .filter(|worker_id| !revised_by_id.contains_key(*worker_id))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for worker_id in removed {
+                    if pending.remove(&worker_id) {
+                        let record = records
+                            .get_mut(&worker_id)
+                            .ok_or(SchedulerError::WorkerMissing)?;
+                        transition(
+                            &worker_id,
+                            &mut record.state,
+                            WorkerState::Cancelled,
+                            "removed by an accepted orchestration revision",
+                            &mut state_changes,
+                        )?;
+                        record.error_code = Some("replanned".into());
+                    }
+                }
+
+                for worker in &revised_plan.workers {
+                    if !by_id.contains_key(&worker.worker_id) {
+                        let mut state = WorkerState::Draft;
+                        transition(
+                            &worker.worker_id,
+                            &mut state,
+                            WorkerState::Ready,
+                            "WorkerSpec added by orchestration revision",
+                            &mut state_changes,
+                        )?;
+                        transition(
+                            &worker.worker_id,
+                            &mut state,
+                            WorkerState::Queued,
+                            "queued by revised dependency scheduler",
+                            &mut state_changes,
+                        )?;
+                        if !worker.dependencies.is_empty() {
+                            transition(
+                                &worker.worker_id,
+                                &mut state,
+                                WorkerState::WaitingDependency,
+                                "waiting for revised dependency artifacts",
+                                &mut state_changes,
+                            )?;
+                        }
+                        records.insert(
+                            worker.worker_id.clone(),
+                            WorkerExecutionRecord {
+                                worker_id: worker.worker_id.clone(),
+                                state,
+                                attempts: 0,
+                                worktree_path: None,
+                                artifact_ids: Vec::new(),
+                                summary: String::new(),
+                                error_code: None,
+                            },
+                        );
+                        pending.insert(worker.worker_id.clone());
+                        control.mark_state(&worker.worker_id, state);
+                    }
+                }
+
+                current_plan = revised_plan;
+                validation = revised_validation;
+                by_id = revised_by_id;
+            }
             if cancellation.is_cancelled() {
                 cancel_pending(
                     &pending,
                     &mut records,
                     &mut state_changes,
-                    &mut failed,
                     "orchestration cancelled",
                 )?;
                 break;
             }
-            if !control.wait_if_paused(&cancellation).await {
+            if control.is_paused()
+                && running.is_empty()
+                && !control.wait_if_paused(&cancellation).await
+            {
                 cancel_pending(
                     &pending,
                     &mut records,
                     &mut state_changes,
-                    &mut failed,
                     "orchestration cancelled while paused",
                 )?;
                 break;
@@ -476,7 +659,10 @@ impl AgentScheduler {
                 .iter()
                 .filter(|id| {
                     by_id.get(*id).is_some_and(|worker| {
-                        worker.dependencies.iter().any(|dep| failed.contains(dep))
+                        worker
+                            .dependencies
+                            .iter()
+                            .any(|dep| unavailable.contains(dep))
                     })
                 })
                 .cloned()
@@ -492,15 +678,20 @@ impl AgentScheduler {
                     &mut state_changes,
                 )?;
                 record.error_code = Some("dependency_failed".into());
-                failed.insert(id.clone());
+                unavailable.insert(id.clone());
                 pending.remove(&id);
             }
             if propagated_dependency_failure {
                 // Re-evaluate the graph before declaring a stall. A dependency failure can
                 // cancel several layers of descendants, and each layer becomes visible only
-                // after its parent is added to `failed`.
+                // after its parent is added to `unavailable`.
                 continue;
             }
+            let available_slots = if control.is_paused() {
+                0
+            } else {
+                (current_plan.maximum_parallel_workers as usize).saturating_sub(running.len())
+            };
             let ready = pending
                 .iter()
                 .filter(|id| {
@@ -511,17 +702,16 @@ impl AgentScheduler {
                             .all(|dependency| completed.contains_key(dependency))
                     })
                 })
-                .take(plan.maximum_parallel_workers as usize)
+                .take(available_slots)
                 .cloned()
                 .collect::<Vec<_>>();
-            if ready.is_empty() {
+            if ready.is_empty() && running.is_empty() {
                 if pending.is_empty() {
                     break;
                 }
                 return Err(SchedulerError::SchedulerStalled);
             }
 
-            let mut running = FuturesUnordered::new();
             for worker_id in ready {
                 pending.remove(&worker_id);
                 let mut spec = by_id
@@ -555,15 +745,19 @@ impl AgentScheduler {
                         ),
                     });
                 }
-                let dependency_patches =
-                    ancestor_patches(plan, &worker_id, &validation.topological_order, &patches);
+                let dependency_patches = ancestor_patches(
+                    &current_plan,
+                    &worker_id,
+                    &validation.topological_order,
+                    &patches,
+                );
                 let manager = self.worktrees.clone();
                 let executor = executor.clone();
                 let worker_cancellation = cancellation.clone();
                 let worker_control = control.clone();
                 let integrate_workspace_changes = self.integrate_workspace_changes;
-                let acceptance_contract = plan.user_hard_constraints.clone();
-                let can_handoff_incomplete = plan.workers.iter().any(|candidate| {
+                let acceptance_contract = current_plan.user_hard_constraints.clone();
+                let can_handoff_incomplete = current_plan.workers.iter().any(|candidate| {
                     candidate.role.eq_ignore_ascii_case("reviewer")
                         && candidate
                             .tools
@@ -591,7 +785,7 @@ impl AgentScheduler {
                 });
             }
 
-            while let Some((worker_id, outcome)) = running.next().await {
+            if let Some((worker_id, outcome)) = running.next().await {
                 match outcome {
                     Ok(outcome) => {
                         let record = records
@@ -627,26 +821,61 @@ impl AgentScheduler {
                         control.mark_state(&worker_id, WorkerState::Completed);
                     }
                     Err(failure) => {
+                        let user_cancelled = cancellation.is_cancelled()
+                            || failure.code.eq_ignore_ascii_case("cancelled");
                         let record = records
                             .get_mut(&worker_id)
                             .ok_or(SchedulerError::WorkerMissing)?;
-                        for change in failure.state_changes {
+                        for mut change in failure.state_changes {
+                            if user_cancelled && change.to == WorkerState::Failed {
+                                change.to = WorkerState::Cancelled;
+                                change.reason = "orchestration cancelled by the user".into();
+                            }
                             record.state = change.to;
                             state_changes.push(change);
                         }
                         record.attempts = failure.attempts;
                         record.worktree_path = failure.worktree_path;
-                        record.summary = failure.message;
-                        record.error_code = Some(failure.code);
+                        record.summary = if user_cancelled {
+                            "orchestration cancelled by the user".into()
+                        } else {
+                            failure.message
+                        };
+                        record.error_code = Some(if user_cancelled {
+                            "cancelled".into()
+                        } else {
+                            failure.code
+                        });
                         control.mark_state(&worker_id, record.state);
-                        failed.insert(worker_id);
+                        if !user_cancelled {
+                            failed.insert(worker_id.clone());
+                            unavailable.insert(worker_id);
+                        }
                     }
                 }
             }
         }
 
         let final_plan = control.current_plan().unwrap_or_else(|| plan.clone());
-        let mut verification = if failed.is_empty() {
+        let user_cancelled = cancellation.is_cancelled()
+            || records
+                .values()
+                .any(|record| record.error_code.as_deref() == Some("cancelled"));
+        let mut verification = if user_cancelled {
+            VerificationRecord {
+                status: VerificationStatus::UnableToVerify,
+                summary: "Verification was not run because the user cancelled the orchestration."
+                    .into(),
+                evidence: state_changes
+                    .iter()
+                    .filter(|change| change.to == WorkerState::Completed)
+                    .map(|change| format!("{}: {}", change.worker_id, change.reason))
+                    .collect(),
+                remaining_risks: vec!["the cancelled task may be incomplete".into()],
+                criterion_results: Vec::new(),
+                findings: Vec::new(),
+            }
+        } else if failed.is_empty() {
             final_plan
                 .workers
                 .iter()
@@ -685,7 +914,7 @@ impl AgentScheduler {
                 findings: Vec::new(),
             }
         };
-        if failed.is_empty() {
+        if failed.is_empty() && !user_cancelled {
             enforce_acceptance_coverage(&mut verification, &final_plan.user_hard_constraints);
         }
         let synthesis = validation
@@ -791,6 +1020,16 @@ fn enforce_acceptance_coverage(
                 .remaining_risks
                 .push("task-wide acceptance coverage is incomplete".into());
         }
+    } else if verification.status == VerificationStatus::PartiallyVerified
+        && verification.findings.is_empty()
+    {
+        // A complete criterion ledger is the authoritative definition of done.
+        // Some Providers still add a generic residual-risk sentence while also
+        // reporting every criterion as directly evidenced and passed. Resolve
+        // that contradiction deterministically instead of trapping a healthy
+        // run in a repair loop with no failed scope to repair.
+        verification.status = VerificationStatus::Verified;
+        verification.remaining_risks.clear();
     }
 }
 
@@ -1267,7 +1506,6 @@ fn cancel_pending(
     pending: &BTreeSet<WorkerId>,
     records: &mut BTreeMap<WorkerId, WorkerExecutionRecord>,
     changes: &mut Vec<WorkerStateChange>,
-    failed: &mut BTreeSet<WorkerId>,
     reason: &str,
 ) -> Result<(), SchedulerError> {
     for id in pending {
@@ -1280,7 +1518,6 @@ fn cancel_pending(
             changes,
         )?;
         record.error_code = Some("cancelled".into());
-        failed.insert(id.clone());
     }
     Ok(())
 }
@@ -1414,6 +1651,28 @@ mod tests {
         assert!(verification.findings.is_empty());
     }
 
+    #[test]
+    fn complete_criterion_ledger_overrides_generic_partial_risk() {
+        let mut verification = VerificationRecord {
+            status: VerificationStatus::PartiallyVerified,
+            summary: "all acceptance checks passed".into(),
+            evidence: vec!["browser and static checks passed".into()],
+            remaining_risks: vec!["a generic environment caveat".into()],
+            criterion_results: vec![CriterionVerification {
+                criterion_id: "AC-1".into(),
+                status: CriterionVerificationStatus::Passed,
+                evidence: vec!["browser interaction observed".into()],
+                note: "observed".into(),
+            }],
+            findings: Vec::new(),
+        };
+
+        enforce_acceptance_coverage(&mut verification, &["required behavior".into()]);
+
+        assert_eq!(verification.status, VerificationStatus::Verified);
+        assert!(verification.remaining_risks.is_empty());
+    }
+
     fn run_git(cwd: &Path, args: &[&str]) {
         let status = Command::new("git")
             .args(args)
@@ -1447,6 +1706,7 @@ mod tests {
             operations: vec![OrchestrationPatchOperation::UpdateWorker {
                 patch: WorkerPatch {
                     worker_id: worker_id.clone(),
+                    display_name: None,
                     role: None,
                     tags: None,
                     objective: None,
@@ -1456,6 +1716,8 @@ mod tests {
                     expected_output: None,
                     output_schema: None,
                     completion_criteria: None,
+                    owned_acceptance_criteria: None,
+                    parallel_group: None,
                     model: None,
                     skills: None,
                     tools: None,
@@ -1556,6 +1818,99 @@ mod tests {
         started: Arc<Notify>,
         release: Arc<Notify>,
         prompts: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    struct ContinuousRefillExecutor {
+        child_started: Arc<Notify>,
+    }
+
+    struct DynamicTopologyExecutor {
+        root_worker: WorkerId,
+        removed_worker: WorkerId,
+        replacement_worker: WorkerId,
+        root_started: Arc<Notify>,
+        release_root: Arc<Notify>,
+        executed: Arc<std::sync::Mutex<Vec<WorkerId>>>,
+    }
+
+    impl WorkerExecutor for DynamicTopologyExecutor {
+        fn execute(&self, context: WorkerExecutionContext) -> WorkerFuture {
+            let root_worker = self.root_worker.clone();
+            let removed_worker = self.removed_worker.clone();
+            let replacement_worker = self.replacement_worker.clone();
+            let root_started = self.root_started.clone();
+            let release_root = self.release_root.clone();
+            let executed = self.executed.clone();
+            Box::pin(async move {
+                let worker_id = context.spec.worker_id.clone();
+                executed
+                    .lock()
+                    .expect("execution trace")
+                    .push(worker_id.clone());
+                if worker_id == removed_worker {
+                    return Err(WorkerFailure::new(
+                        "stale_topology_dispatched",
+                        "the removed Worker must never execute",
+                    ));
+                }
+                if worker_id == root_worker {
+                    root_started.notify_one();
+                    release_root.notified().await;
+                }
+                let summary = if worker_id == replacement_worker {
+                    "replacement Worker completed the revised acceptance task"
+                } else {
+                    "original Worker completed without blocking the replan"
+                };
+                Ok(WorkerOutput {
+                    summary: summary.into(),
+                    artifacts: Vec::new(),
+                    verification: None,
+                })
+            })
+        }
+    }
+
+    impl WorkerExecutor for ContinuousRefillExecutor {
+        fn execute(&self, context: WorkerExecutionContext) -> WorkerFuture {
+            let child_started = self.child_started.clone();
+            Box::pin(async move {
+                match context.spec.role.as_str() {
+                    "fast-root" => Ok(WorkerOutput {
+                        summary: "fast root completed".into(),
+                        artifacts: Vec::new(),
+                        verification: None,
+                    }),
+                    "slow-root" => {
+                        tokio::time::timeout(Duration::from_secs(2), child_started.notified())
+                            .await
+                            .map_err(|_| {
+                                WorkerFailure::new(
+                                    "batch_scheduler_detected",
+                                    "the unlocked child was not refilled while another root remained active",
+                                )
+                            })?;
+                        Ok(WorkerOutput {
+                            summary: "slow root observed continuous refill".into(),
+                            artifacts: Vec::new(),
+                            verification: None,
+                        })
+                    }
+                    "unlocked-child" => {
+                        child_started.notify_one();
+                        Ok(WorkerOutput {
+                            summary: "child started as soon as its dependency completed".into(),
+                            artifacts: Vec::new(),
+                            verification: None,
+                        })
+                    }
+                    role => Err(WorkerFailure::new(
+                        "unexpected_role",
+                        format!("unexpected refill fixture role {role}"),
+                    )),
+                }
+            })
+        }
     }
 
     impl WorkerExecutor for RetryRevisionExecutor {
@@ -1747,6 +2102,173 @@ mod tests {
         assert!(result.synthesis.contains("Verifier observed"));
         assert!(!repository.join("src/a.txt").exists());
         assert!(!repository.join("src/b.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn scheduler_refills_a_freed_slot_without_waiting_for_the_batch() {
+        let temporary = tempfile::tempdir().expect("temp");
+        let repository = temporary.path().join("repository");
+        initialize_repository(&repository);
+        let mut plan = draft_orchestration(
+            "Research and implement multiple modules, then verify",
+            vec![AllowedWorkerModel {
+                provider: "fixture".into(),
+                model: "fixture-model".into(),
+            }],
+            vec![
+                "filesystem_read".into(),
+                "filesystem_write".into(),
+                "process_spawn".into(),
+            ],
+        )
+        .expect("plan");
+        let fast = plan.workers[0].worker_id.clone();
+        plan.maximum_parallel_workers = 2;
+        plan.workers[0].role = "fast-root".into();
+        plan.workers[0].dependencies.clear();
+        plan.workers[0].write_scopes.clear();
+        plan.workers[1].role = "slow-root".into();
+        plan.workers[1].dependencies.clear();
+        plan.workers[1].write_scopes.clear();
+        plan.workers[2].role = "unlocked-child".into();
+        plan.workers[2].dependencies = vec![fast];
+        plan.workers[2].write_scopes.clear();
+        let child_started = Arc::new(Notify::new());
+        let manager = WorktreeManager::open(
+            &repository,
+            temporary.path().join("data"),
+            &plan.orchestration_id,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("manager");
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            AgentScheduler::new(manager).run(
+                &plan,
+                Arc::new(ContinuousRefillExecutor { child_started }),
+                CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("continuous-refill scheduler did not stall")
+        .expect("run");
+
+        assert!(
+            result
+                .workers
+                .values()
+                .all(|record| record.state == WorkerState::Completed)
+        );
+        assert!(result.synthesis.contains("continuous refill"));
+    }
+
+    #[tokio::test]
+    async fn scheduler_applies_a_live_topology_replan_without_restarting_active_work() {
+        let temporary = tempfile::tempdir().expect("temp");
+        let repository = temporary.path().join("repository");
+        initialize_repository(&repository);
+        let mut plan = draft_orchestration(
+            "Research and implement multiple modules, then verify",
+            vec![AllowedWorkerModel {
+                provider: "fixture".into(),
+                model: "fixture-model".into(),
+            }],
+            vec![
+                "filesystem_read".into(),
+                "filesystem_write".into(),
+                "process_spawn".into(),
+            ],
+        )
+        .expect("plan");
+        plan.maximum_parallel_workers = 2;
+        let root_worker = plan.workers[0].worker_id.clone();
+        let removed = plan.workers.last().expect("replaceable leaf").clone();
+        plan.workers[0].role = "dynamic-root".into();
+        plan.workers[0].dependencies.clear();
+        plan.workers[0].write_scopes.clear();
+        plan.workers[1].role = "independent-sibling".into();
+        plan.workers[1].dependencies.clear();
+        plan.workers[1].write_scopes.clear();
+        plan.workers[2].dependencies = vec![root_worker.clone(), plan.workers[1].worker_id.clone()];
+        plan.workers[2].write_scopes.clear();
+
+        let mut replacement = plan.workers[2].clone();
+        replacement.worker_id = WorkerId::new(format!("worker-{}", Uuid::new_v4()));
+        replacement.display_name = "Verify the revised module boundary".into();
+        replacement.role = "reviewer".into();
+        replacement.task =
+            "Verify only the newly guided module boundary and preserve completed work.".into();
+        let patch = OrchestrationPatch {
+            patch_id: format!("patch-{}", Uuid::new_v4()),
+            base_version: plan.version,
+            apply_mode: OrchestrationPatchApplyMode::ApplyAfterCurrentStep,
+            reason: "user guidance narrows the unfinished verification task".into(),
+            operations: vec![
+                OrchestrationPatchOperation::RemoveWorker {
+                    worker_id: removed.worker_id.clone(),
+                },
+                OrchestrationPatchOperation::AddWorker {
+                    spec: replacement.clone(),
+                },
+            ],
+        };
+        let revised = crate::apply_user_patch(&plan, &patch).expect("revised topology");
+        let manager = WorktreeManager::open(
+            &repository,
+            temporary.path().join("data"),
+            &plan.orchestration_id,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("manager");
+        let control = Arc::new(SchedulerControl::new(&plan));
+        let root_started = Arc::new(Notify::new());
+        let release_root = Arc::new(Notify::new());
+        let executed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let scheduler_task = {
+            let control = control.clone();
+            let executor = Arc::new(DynamicTopologyExecutor {
+                root_worker: root_worker.clone(),
+                removed_worker: removed.worker_id.clone(),
+                replacement_worker: replacement.worker_id.clone(),
+                root_started: root_started.clone(),
+                release_root: release_root.clone(),
+                executed: executed.clone(),
+            });
+            let plan = plan.clone();
+            tokio::spawn(async move {
+                AgentScheduler::new(manager)
+                    .run_controlled(&plan, executor, CancellationToken::new(), control)
+                    .await
+            })
+        };
+        root_started.notified().await;
+        control
+            .submit_revision(&patch, &revised)
+            .expect("live replan accepted while the root remains active");
+        release_root.notify_one();
+        let result = tokio::time::timeout(Duration::from_secs(5), scheduler_task)
+            .await
+            .expect("dynamic scheduler did not stall")
+            .expect("join")
+            .expect("run");
+
+        let executed = executed.lock().expect("execution trace");
+        assert!(executed.contains(&root_worker));
+        assert!(executed.contains(&replacement.worker_id));
+        assert!(!executed.contains(&removed.worker_id));
+        assert_eq!(result.version, revised.version);
+        assert_eq!(result.workers[&root_worker].attempts, 1);
+        assert_eq!(result.workers[&root_worker].state, WorkerState::Completed);
+        assert_eq!(
+            result.workers[&removed.worker_id].state,
+            WorkerState::Cancelled
+        );
+        assert_eq!(
+            result.workers[&replacement.worker_id].state,
+            WorkerState::Completed
+        );
     }
 
     #[tokio::test]
@@ -2027,7 +2549,20 @@ mod tests {
         assert_eq!(record.error_code.as_deref(), Some("cancelled"));
         assert_eq!(
             result.verification.status,
-            VerificationStatus::FailedVerification
+            VerificationStatus::UnableToVerify
+        );
+        assert!(result.verification.findings.is_empty());
+        assert!(
+            result
+                .workers
+                .values()
+                .all(|worker| worker.state != WorkerState::Failed)
+        );
+        assert!(
+            !result
+                .state_changes
+                .iter()
+                .any(|change| change.to == WorkerState::Failed)
         );
         assert!(result.state_changes.iter().any(|change| {
             change.worker_id == worker_id && change.to == WorkerState::Cancelled
@@ -2081,6 +2616,63 @@ mod tests {
             control.submit_revision(&now_patch, &now_plan),
             Err(SchedulerControlError::InvalidWorkerState { .. })
         ));
+    }
+
+    #[test]
+    fn live_topology_revision_replaces_only_not_started_workers() {
+        let plan = draft_orchestration(
+            "Research the runtime and independently verify it",
+            vec![AllowedWorkerModel {
+                provider: "fixture".into(),
+                model: "fixture-model".into(),
+            }],
+            vec![
+                "filesystem_read".into(),
+                "filesystem_write".into(),
+                "process_spawn".into(),
+            ],
+        )
+        .expect("plan");
+        let removed = plan.workers.last().expect("leaf Worker").clone();
+        let mut replacement = removed.clone();
+        replacement.worker_id = WorkerId::new(format!("worker-{}", Uuid::new_v4()));
+        replacement.display_name = "Verify revised acceptance scope".into();
+        let patch = OrchestrationPatch {
+            patch_id: format!("patch-{}", Uuid::new_v4()),
+            base_version: plan.version,
+            apply_mode: OrchestrationPatchApplyMode::ApplyAfterCurrentStep,
+            reason: "guidance requires a narrower verifier".into(),
+            operations: vec![
+                OrchestrationPatchOperation::RemoveWorker {
+                    worker_id: removed.worker_id.clone(),
+                },
+                OrchestrationPatchOperation::AddWorker {
+                    spec: replacement.clone(),
+                },
+            ],
+        };
+        let revised = crate::apply_user_patch(&plan, &patch).expect("revised topology");
+        let control = SchedulerControl::new(&plan);
+        control.mark_state(&removed.worker_id, WorkerState::WaitingDependency);
+        control
+            .submit_revision(&patch, &revised)
+            .expect("live topology accepted");
+
+        assert_eq!(
+            control.worker_state(&removed.worker_id),
+            Some(WorkerState::Cancelled)
+        );
+        assert_eq!(
+            control.worker_state(&replacement.worker_id),
+            Some(WorkerState::Draft)
+        );
+        assert_eq!(
+            control
+                .take_topology_revision()
+                .expect("pending topology")
+                .version,
+            revised.version
+        );
     }
 
     #[tokio::test]

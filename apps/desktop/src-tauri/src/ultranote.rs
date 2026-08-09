@@ -5,8 +5,8 @@ use std::{
 
 use lunascope_core::{
     Course, CourseMemory, CourseSearchHit, CourseSource, CourseSourceKind, CourseThreadBinding,
-    HomeworkKind, HomeworkPolicyDecision, NoteRevision, ProviderType, SyllabusRevision,
-    SyllabusStructure, UltraNoteMode, UltraNoteProjectConfig, UltraNoteWorkspace,
+    HomeworkKind, HomeworkPolicyDecision, NoteRevision, SyllabusRevision, SyllabusStructure,
+    UltraNoteMode, UltraNoteProjectConfig, UltraNoteWorkspace,
 };
 use lunascope_integrations::{
     NativeProviderClient, ProviderInvocation, ProviderMessage, ProviderMessageRole,
@@ -120,9 +120,14 @@ async fn parse_syllabus_with_orchestration_model(
     now: &str,
 ) -> Result<SyllabusRevision, String> {
     let providers = state.store.provider_configs().map_err(display_error)?;
-    let (provider, model) = orchestration::selected_orchestration_model(state, &providers)?;
+    let (provider, model, effort, custom_effort) =
+        orchestration::selected_orchestration_model(state, &providers)?;
     let client =
         NativeProviderClient::from_keyring(&provider, &state.credentials).map_err(display_error)?;
+    let thinking_enabled = orchestration::thinking_toggle_with_override(
+        orchestration::provider_thinking_enabled(&provider, &model, effort),
+        custom_effort.as_deref(),
+    );
     let instructions = r#"You are LunaScope's course-onboarding parser. Extract only information explicitly supported by the syllabus. Return one JSON object and no prose. The object must use camelCase and contain: structure with courseInformation, learningObjectives, meetingTimes, topicSchedule, assessments, grading, textbooks, latePolicy, attendancePolicy, aiPolicy, academicIntegrityPolicy (all string arrays); ambiguities (string array); prestudyPlan (string array); firstPhasePlan (string array). Never invent dates, requirements, grading weights, policies, or learning objectives. Use concise student-facing language."#;
     let summary = client
         .stream(
@@ -140,9 +145,11 @@ async fn parse_syllabus_with_orchestration_model(
                 }],
                 tools: Vec::new(),
                 max_output_tokens: 5_000,
-                thinking_enabled: (provider.provider_type == ProviderType::DeepSeek)
-                    .then_some(false),
-                reasoning_effort: Some("high".to_owned()),
+                thinking_enabled,
+                reasoning_effort: orchestration::reasoning_effort_parameter_with_override(
+                    effort,
+                    custom_effort.as_deref(),
+                ),
                 reasoning_summary: None,
             },
             std::time::Duration::from_secs(90),
@@ -550,7 +557,9 @@ async fn render_pdf_with_edge(html_path: &Path, pdf_path: &Path) -> Result<(), S
     fs::create_dir_all(&profile).map_err(display_error)?;
     let url = url::Url::from_file_path(html_path)
         .map_err(|_| "could not convert the note HTML path to a file URL".to_owned())?;
-    let output = tokio::process::Command::new(edge)
+    let mut command = tokio::process::Command::new(edge);
+    lunascope_runtime::hide_tokio_console_window(&mut command);
+    let output = command
         .args([
             "--headless=new",
             "--disable-gpu",
@@ -691,7 +700,10 @@ mod export_tests {
     use lunascope_extensions::McpCredentialStore;
     use lunascope_integrations::KeyringCredentialStore;
     use lunascope_storage::SqliteEventStore;
-    use std::sync::{Arc, Mutex};
+    use std::{
+        collections::BTreeMap,
+        sync::{Arc, Mutex},
+    };
 
     #[test]
     fn print_document_renders_markdown_and_local_mermaid_without_remote_assets() {
@@ -755,7 +767,7 @@ mod export_tests {
         store
             .save_provider_config(&ProviderConfig {
                 id: "deepseek-primary".to_owned(),
-                provider_type: ProviderType::DeepSeek,
+                provider_type: lunascope_core::ProviderType::DeepSeek,
                 protocol: ProviderProtocol::OpenAiChatCompletions,
                 display_name: "DeepSeek official".to_owned(),
                 base_url: "https://api.deepseek.com".to_owned(),
@@ -774,6 +786,8 @@ mod export_tests {
             credentials: KeyringCredentialStore,
             mcp_credentials: McpCredentialStore,
             active_orchestration: Mutex::new(None),
+            vision_description_cache: Arc::new(Mutex::new(BTreeMap::new())),
+            verified_reasoning_configs: Mutex::new(Default::default()),
         };
         let config = tauri::async_runtime::block_on(initialize_project_course(
             &state,

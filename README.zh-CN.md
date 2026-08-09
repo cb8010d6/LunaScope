@@ -1,262 +1,316 @@
 # LunaScope
 
-**望月者计划 · The Moonwatcher Project**
+**望月者计划 / The Moonwatcher Project**
 
-简体中文 | [English](README.md)
+面向 Windows、本地优先，适合长时间运行、过程可观察、多模型协作的 Agent 工作台。
 
-LunaScope 是一款 Windows 优先、本地优先的 Agent 工作台。它想解决的问题很直接：用户不应该先学习怎样拆 Agent、画编排图，再把目标转述给每个子 Agent。你只需要进入一个项目、选择工作区，然后像正常对话一样说明要做什么。LunaScope 会判断是否需要多 Agent，建立执行图，在真实本地文件上工作，并把独立验收放在实现之后。
+[English](README.md) · [下载 0.3.1](https://github.com/LagrangeNSS/LunaScope/releases/tag/v0.3.1) · [运行架构](docs/AGENT_RUNTIME_ARCHITECTURE.md) · [安全模型](docs/THREAT_MODEL.md) · [第三方声明](docs/THIRD_PARTY_NOTICES.md)
 
-0.1.0 是第一次公开的工程预览版。它已经是可以运行的桌面软件，具备 Rust 原生执行核心、持久化对话、有界工具、多提供商路由、隔离式多 Agent、真实浏览器验收、动态 Skills、MCP 与 UltraNote 学习工作流。不过它还不是一个包装完成的商业正式版：Windows 代码签名、项目最终许可协议和部分长时间发布验收仍待完成。README 会把已完成和未完成的部分分别写清楚。
+LunaScope 关注的是模型说“我可以做”之后发生的事：把对话转换成可持久化的运行，为模型提供有边界的本地工具，把复杂任务拆成可检查的 Worker，让文件变更与验收证据保持可见，并在验证失败后进行针对性修复。0.3.1 是可运行的 Windows 工程预览版，具备 Rust 原生执行核心，但还不是包装完成的商业正式版。
 
-## 0.1.0 Release
+## 0.3.1 Release
 
-| 项目 | 内容 |
+| 下载内容 | 链接 |
 |---|---|
-| 发布阶段 | 公开工程预览版 |
-| 平台 | Windows 10/11，x64 |
-| 桌面技术栈 | Tauri 2、Rust、TypeScript、原生 WebView2 |
-| Windows 安装器 | [`LunaScope_0.1.0_x64-setup.exe`](https://github.com/LagrangeNSS/LunaScope/releases/download/v0.1.0/LunaScope_0.1.0_x64-setup.exe) |
-| 便携可执行文件 | [`lunascope-desktop.exe`](https://github.com/LagrangeNSS/LunaScope/releases/download/v0.1.0/lunascope-desktop.exe) |
-| 校验值 | [`SHA256SUMS.txt`](release/v0.1.0/SHA256SUMS.txt) |
-| 发布说明 | [`RELEASE_NOTES.md`](release/v0.1.0/RELEASE_NOTES.md) |
+| Windows 安装器 | [`LunaScope_0.3.1_x64-setup.exe`](https://github.com/LagrangeNSS/LunaScope/releases/download/v0.3.1/LunaScope_0.3.1_x64-setup.exe) |
+| 便携可执行文件 | [`lunascope-desktop.exe`](https://github.com/LagrangeNSS/LunaScope/releases/download/v0.3.1/lunascope-desktop.exe) |
+| SHA-256 校验值 | [`SHA256SUMS.txt`](release/v0.3.1/SHA256SUMS.txt) |
+| 发布说明 | [`RELEASE_NOTES.md`](release/v0.3.1/RELEASE_NOTES.md) |
 
-当前安装器尚未进行代码签名，因此 Windows SmartScreen 可能要求用户确认。LunaScope 还需要 Microsoft Edge WebView2 Runtime；当前版本的 Windows 通常已经自带该运行时。
+当前 Windows 二进制尚未签名。Windows 可能显示 SmartScreen 提示，运行前请先核对校验值。
 
-## LunaScope 目前能做什么
+### 本版变化
 
-- 从普通对话直接开始执行单 Agent 或多 Agent 任务。
-- 由编排模型判断是否需要子 Agent，不要求用户自己设计编排。
-- 将模型提供的 reasoning summary、自然语言进展、工具状态、计划、Worker 状态和验收记录分开显示。
-- 通过 Rust 原生有界工具读取、创建和修改真实工作区文件。
-- 执行有超时、取消、输出限制和 Windows 进程树回收的本地命令。
-- 同时保存 OpenAI、Anthropic、DeepSeek 和兼容提供商配置。
-- 将提供商密钥保存在 Windows Credential Manager，而非项目文件或事件数据库。
-- 让 Worker 在隔离的 Git worktree 中执行，再把经过审查的变更同步回真实工作区。
-- 在委派、重试和上下文压缩后继续保留任务级验收标准。
-- 使用独立 verifier；遇到致命缺陷或未验证验收项时自动生成定向修复链路。
-- 使用本机 Edge 或 Chrome 验收网页，获取控制台、运行时、WebGL、shader、Canvas、布局、交互和截图证据。
-- 从固定的全局 Skill 目录动态加载 Codex 与 Claude 兼容 Skills。
-- 支持有界 MCP、GitHub Skill 导入、模型路由、暂停、继续、取消和运行中引导重规划。
-- 提供 UltraNote 项目：课程上下文、文档解析、双语术语、互动 HTML 笔记、Mermaid、数学表达和离线 PDF。
-- 提供可选原生桌面伙伴：导入本地 Spine 3.8 或 Live2D Cubism 模型并直接跟随 Agent 任务状态；模型库支持元数据搜索、按需下载、摘要校验、已安装管理，Avatar Studio 支持自动生成可编辑形象包草稿，不启动额外服务，也不捆绑角色资产。
+- 将编排改造成完整、可控制的持久化 Run：从规划前开始，贯穿执行、验证、修复、暂停、引导与取消。
+- 加入细粒度图规划、有界并行 Worker、隔离写入范围、动态监督、空闲槽位持续补位和逐项验收证据。
+- 重构编排画布：类型化稳定坐标、自由拖动与缩放、缩略图、拓扑排版、增量状态更新和 DPI 安全的适应视图。
+- 以类型化 Agent 会话重构消息流：模型主动公开的摘要、一级工具事件、独立 Worker 链路和持久化对话上下文。
+- 支持 OpenAI Responses、OpenAI Chat Completions、Anthropic Messages 与通用兼容传输，并能真实测试模型与思考强度。
+- 为纯文本主模型加入独立视觉路由，同时提供有界本地浏览器验收、五次递增传输重试和无固定代数上限的进展式修复。
+- 将 UltraNote 扩展为项目级课程工作流：文档导入、课程记忆、引用笔记、双语术语、本地 Mermaid/数学渲染与离线 PDF。
+- 加入可选的桌面伙伴系统，支持带许可确认的 Live2D/Spine 模型库与 Avatar 工作流。
+
+## 产品能力
+
+LunaScope 的界面保持克制，但运行内核会把关键事实明确记录下来：
+
+- **项目与对话**：一个项目可以关联多个文件夹，由其中一个明确的 workspace 决定可写边界。对话与任务结束总结长期保存在 SQLite。
+- **Agent 执行**：原生读取、创建、保护式修改、进程、搜索、浏览器验收、Skill、MCP 与有界自我管理工具。
+- **动态编排**：根据任务生成 Worker 名称、验收条件、依赖、写入范围、并行组、Verifier 覆盖关系与安全图修订。
+- **过程可见**：模型主动提供的公开推理摘要、工具请求与结果、文件变更、验收证据、Worker 状态和最终交付。
+- **模型路由**：可以同时保存多个提供商，并分别分配给编排、视觉和 Worker。
+- **Skills 与 MCP**：系统 Skill 与用户 Skill 存放在 workspace 外的独立固定目录，按需动态选择；GitHub Skill 通过固定版本和隔离检查导入。
+- **UltraNote**：从用户上传的课程资料构建课程上下文、笔记和学习材料，而不是另起一个聊天模式。
+- **桌面伙伴**：可选的本地角色窗口、模型库与 Avatar 工作流，与 Agent 执行契约相互独立。
 
 ## 架构
 
-LunaScope 把产品状态和权限放在 Rust 中。WebView 负责界面显示，但不会获得任意 Shell、文件系统、凭据或进程权限。
-
-```mermaid
-flowchart LR
-    U["用户对话"] --> UI["Tauri 桌面界面"]
-    UI -->|"类型化 IPC"| CORE["Rust 领域契约"]
-
-    CORE --> ORC["编排模型"]
-    ORC --> PLAN["验收契约与 Worker 图"]
-    PLAN --> SCH["原生调度器"]
-
-    SCH --> W1["隔离的实现 worktree"]
-    SCH --> W2["隔离的修复 worktree"]
-    SCH --> V["只读 verifier"]
-
-    W1 --> TOOLS["有界文件、进程、浏览器与 Skill 工具"]
-    W2 --> TOOLS
-    V --> TOOLS
-
-    TOOLS --> WS["用户选择的真实工作区"]
-    SCH --> EVENTS["持久化事件日志"]
-    EVENTS --> DB["SQLite 与恢复快照"]
-
-    PROVIDERS["OpenAI · Anthropic · DeepSeek · Compatible"] --> NORMALIZE["协议归一化"]
-    NORMALIZE --> ORC
-    NORMALIZE --> W1
-    NORMALIZE --> W2
-    NORMALIZE --> V
-```
-
-### 长任务如何收敛
-
-实现、修复和验收是三个职责不同的阶段。Builder 如果在同一个问题上反复卡住，可以保留已经完成的真实文件和诊断证据，明确标记为“尚未验收”后交给新的 Repairer，而不是把整轮上下文耗尽。Repairer 会收到真实补丁和精确失败信息，已经完成的操作不会重跑。
-
-```mermaid
-flowchart TD
-    A["对话与工作区上下文"] --> B["生成稳定的 AC-1 ... AC-N 验收项"]
-    B --> C["建立有界 Worker 图"]
-    C --> D["检查 → 操作 → 核对"]
-    D --> E{"当前阶段是否可以结算？"}
-
-    E -->|"仍有一次聚焦修复机会"| D
-    E -->|"相同阻塞反复出现"| H["保存补丁、错误与诊断证据"]
-    H --> R["新的修复 Worker"]
-    R --> D
-
-    E -->|"可以"| V["独立 verifier"]
-    V --> L["为每个 AC-N 返回类型化结果"]
-    L --> G{"是否全部取得直接通过证据？"}
-    G -->|"否"| F["生成定向修复链路"]
-    F --> R
-    G -->|"是"| S["整合交付并持久化任务总结"]
-```
-
-### 信任和权限边界
+### 一个贯穿全程的 Run
 
 ```mermaid
 flowchart TB
-    subgraph Trusted["原生可信边界"]
-        POLICY["权限与策略引擎"]
-        KEYRING["Windows Credential Manager 引用"]
-        JOURNAL["事件日志与恢复"]
-        ROUTER["类型化工具路由"]
-    end
-
-    subgraph Isolated["每个 Worker 的隔离空间"]
-        MODEL["提供商模型上下文"]
-        TREE["固定提交的 worktree"]
-        PROC["有界子进程树"]
-        BROWSER["仅访问工作区的浏览器验收器"]
-    end
-
-    subgraph Untrusted["一律作为数据处理"]
-        FILES["工作区文件"]
-        SKILLS["导入的 Skills 与引用资料"]
-        OUTPUT["命令、浏览器与网页输出"]
-    end
-
-    POLICY --> ROUTER
-    KEYRING -->|"使用密钥但不返回密钥"| MODEL
-    ROUTER --> TREE
-    ROUTER --> PROC
-    ROUTER --> BROWSER
-    FILES --> ROUTER
-    SKILLS --> ROUTER
-    OUTPUT --> ROUTER
-    ROUTER --> JOURNAL
+    U["用户消息"] --> M["持久化对话消息"]
+    M --> R["在规划前创建 Run"]
+    R --> O["编排模型"]
+    O --> D["规划活动与图草稿"]
+    D --> G["通过门禁的执行图"]
+    G --> S["依赖感知调度器"]
+    S --> W1["Worker A 隔离范围"]
+    S --> W2["Worker B 隔离范围"]
+    S --> W3["Worker N 隔离范围"]
+    W1 --> I["按序集成与证据账本"]
+    W2 --> I
+    W3 --> I
+    I --> V["独立 Verifier"]
+    V -->|"全部致命条件通过"| F["最终交付与延续摘要"]
+    V -->|"缺陷仍在但有进展"| X["定向修复 Worker"]
+    X --> I
+    V -->|"致命状态重复且无进展"| N["需要介入"]
 ```
 
-## 源码结构
+Run 在第一次远程规划调用前就已存在。规划、执行、验证和修复共用同一个取消令牌、暂停门、引导队列、事件序列和项目/对话身份。稳定运行时发送的新消息会成为持久化引导：已经完成的副作用保持不变，未启动节点可以重排，运行中的 Worker 会在安全的模型边界接收改变。
+
+### 事件溯源执行
+
+```mermaid
+flowchart LR
+    C["窄口径 Tauri 命令"] --> P["结构、状态、范围与策略校验"]
+    P --> A{"需要批准？"}
+    A -->|"是"| Q["持久化批准请求"]
+    A -->|"否"| T["SQLite 事务"]
+    T --> E["追加类型化 EventEnvelope"]
+    E --> J["原子更新 Run 投影"]
+    J --> UI["按序发布界面增量"]
+    UI --> G["消息、编排图与 Worker 投影"]
+```
+
+Rust 领域类型是唯一契约来源。事件只追加且带有结构版本；TypeScript 声明和 JSON Schema 由 Rust 生成。SQLite 使用 WAL。工具副作用采用持久化请求/结果协议和幂等键；子进程由运行时托管，使取消能够结束整棵进程树。
+
+### Agent 会话与上下文
+
+```mermaid
+flowchart TB
+    P["主会话"] --> O["编排模型"]
+    P --> C["上下文压缩 Agent"]
+    O --> W["Workers"]
+    O --> S["监督器"]
+    O --> V["Verifier"]
+    W --> T["类型化工具与模型事件"]
+    S --> T
+    V --> T
+    T --> DB["持久化事件日志"]
+    DB --> CP["延续检查点与近期消息"]
+    CP --> P
+```
+
+界面不会暴露或伪造模型隐藏的原始思维链。LunaScope 展示提供商给出的公开摘要或模型明确提交的说明，并把真实 Shell、文件、浏览器、权限、验证和错误事件分别作为证据。用户消息与任务结束总结长期保留；上下文压缩只增加检查点，不删除源消息。
+
+## 动态多 Agent 编排
+
+编排模型承担技术负责人的职责，而不是静态选择几个角色。首个请求即可报告进度、更新草稿并提交正式图。本地质量门禁会拒绝笼统任务、缺失的验收归属、写入冲突、循环依赖和没有验证覆盖的要求。
+
+普通 Worker 应当只负责一个可审查的模块、函数簇、资源组、迁移、测试簇或有边界的缺陷。运行契约最多允许 24 个 Worker，最大并行宽度为 8；每个节点具有任务生成的名称、依赖、预期交付物、验收条件和明确写入范围。彼此独立的节点可以同时运行，范围重叠的写入者会被排序。任一 Worker 完成后，调度器会立即补入新解锁节点，不等待整批结束。
+
+监督器只消费有界事件增量，不会反复把完整项目发给模型。它可以在安全边界引导活动节点，或修改尚未开始的节点，但不能重新打开完成节点、重复成功副作用、扩大权限或覆盖用户取消。
+
+网络传输重试与项目修复是两套不同策略：
+
+- 没有副作用的提供商请求可在 2、5、10、20、40 秒后递增重试；
+- 只要文件、测试或证据继续改善，Verifier 修复就没有固定代数上限；
+- 如果连续三代同时保持相同致命缺陷指纹且没有任何进展，则暂停为 `NeedsIntervention`，避免无效消耗。
+
+## 提供商与模型路由
+
+LunaScope 把提供商品牌和传输协议分开配置，因此官方接口和大量中转站可以共用同一套类型化运行时。
+
+| 传输协议 | 常见配置 |
+|---|---|
+| OpenAI Responses | OpenAI 与支持 Responses 的兼容中转站 |
+| OpenAI Chat Completions | DeepSeek、GLM、Kimi/Moonshot、Qwen、Grok/xAI 与 OpenAI 兼容中转站 |
+| Anthropic Messages | Anthropic 与兼容中转站 |
+
+可以同时保存多个 Provider 配置，并为编排、视觉和 Worker 分配不同的 Provider/模型。自定义原生思考强度只有在当前桌面会话中，使用完全相同的 Provider、模型、凭据引用和强度完成真实连接测试后才能保存；留空表示采用提供商默认值。
+
+当主模型不能理解图片时，LunaScope 可把有界视觉输入发送给独立视觉模型，再将只针对问题、作为普通资料的视觉描述交还文本模型。没有视觉任务时不会提前初始化视觉模型；视觉路由不可用时会明确失败，不会把不受支持的二进制静默发给主模型。
+
+凭据通过引用 ID 指向 Windows Credential Manager。密钥值不会写入项目 JSON、事件、日志、README 或 WebView。
+
+## UltraNote
+
+UltraNote 是 LunaScope 的课程与文档学习工作流，不是独立的模型模式。在普通项目中，使用 `/ultranote` 触发当前请求；如果项目在创建时就选择 UltraNote，则其中每个对话都会自动获得同一份持久化课程上下文，不再需要输入命令。
+
+### 课程基础
+
+创建 UltraNote 项目时需要填写或提供：
+
+1. 课程名称；
+2. 可选课程编号；
+3. 上传的课程大纲；
+4. 可选的个人笔记规范。
+
+编排模型只提取资料支持的课程结构、目标、日期、规则与歧义。没有写明的考试日期、AI 使用政策等内容会保持未解决状态，不会被猜测。大纲修订、课程与对话绑定、笔记来源、引用锚点、复习条目和延续状态都按课程隔离保存在 SQLite 中。
+
+### 从资料到学习成果
+
+```mermaid
+flowchart LR
+    A["PDF、DOC/DOCX、PPT/PPTX、XLS/XLSX、Markdown、文本或图片"] --> B["有界原生导入"]
+    B --> C["文本、结构、来源哈希与提取图片"]
+    C --> D["课程范围内的模型上下文"]
+    D --> E["带引用的结构化笔记"]
+    E --> F["术语表与检索练习"]
+    E --> G["本地 Mermaid 概念图"]
+    E --> H["MathML 数学公式"]
+    F --> I["Markdown 课程档案"]
+    G --> J["离线 HTML / PDF"]
+    H --> J
+```
+
+| 输入类型 | 当前处理方式 |
+|---|---|
+| PDF | 原生有界文本提取；可通过配置的多模态链路理解页面图像 |
+| DOCX、PPTX、XLSX | 原生提取 OOXML 结构和允许范围内的内嵌图片 |
+| DOC、PPT、XLS | 可作为对应文档类别导入，具体提取取决于受支持的原生解析路径 |
+| Markdown 与文本 | 以 UTF-8 有界导入，并保留来源锚点 |
+| 图片 | 使用主模型原生多模态或独立视觉回退 |
+
+导入内容始终是“不可信资料”，不会成为高于系统规则的指令。在进入模型前，文件数量、单文件大小、总大小、提取文本和图片负载都会经过限制。
+
+### 笔记规则
+
+- 笔记主体使用设置中的模型回复语言。如果原始资料使用另一种语言，专业词与难词可以在括号中补充英文，并在合适时生成词汇表。
+- 内容以笔记本身为中心：学习目标、前置概念、核心讲解、公式、例题、证据、总结、检索问题和必要的词汇表。导出物不会附带聊天记录或多余解释。
+- 资料性结论保留来源标签与引用锚点。没有来源依据时，不会擅自声称“教师重点强调”。
+- 数学内容应定义符号、单位、假设、定义域和边界情况。支持的 LaTeX 在打印输出中本地渲染为 MathML。
+- 只有在概念关系确实适合时才使用 Mermaid。运行时和主题随软件本地提供，不依赖 CDN。
+- 用户自定义规范只影响呈现方式，不能削弱出处、课程隔离、未解决政策和学术诚信边界。
+- 对已评分或政策未知的作业，永远不提供可以直接提交的答案模式。
+
+### 互动笔记与 PDF
+
+用户要求可视化笔记时，Agent 可以生成离线互动 HTML 页面，包括本地资源、响应式排版、图表、公式和适合任务的交互控件。浏览器验收在有界临时副本中运行，默认关闭外部网络。UltraNote 的 PDF 导出会把笔记 Markdown 转换成本地打印文档，使用随包提供的 Mermaid 与 KaTeX/MathML，等待渲染完成后调用已安装的 Microsoft Edge 输出无页眉页脚 PDF。
+
+如果 PDF 渲染失败，系统会保留 Markdown 和 HTML，而不是丢失笔记。因此 PDF 功能依赖受支持的 Windows 环境和 Microsoft Edge。
+
+## 工具、权限、Skills 与 MCP
+
+WebView 不存在“执行任意字符串”的后门。原生命令会先验证输入结构、Run 状态、路径、项目范围、权限模式与策略。
+
+- **请求批准**：敏感修改前询问用户。
+- **自我审批**：允许项目范围内的普通工作，同时保留硬性禁止项。
+- **完全访问**：增加有边界的 LunaScope 自我管理，例如查看安全设置和导入 Skill；仍不能读取密钥或执行导入项目的安装钩子。
+- **Bypass mode**：改变选定范围内的批准行为，不会移除底层安全边界。
+
+系统 Skill 与用户 Skill 分开存放在 workspace 之外。GitHub 导入会固定提交版本、在隔离区检查、生成清单，再把组件作为惰性内容安装；检查与安装期间不会执行脚本或钩子。MCP 配置使用类型化传输和凭据引用，而不是明文 Authorization 值。
+
+## 仓库结构
 
 ```text
 LunaScope/
-├─ apps/
-│  └─ desktop/
-│     ├─ src/                         TypeScript 桌面界面
-│     └─ src-tauri/                   Tauri 适配层、原生命令和内置资源
+├─ apps/desktop/                       Tauri 宿主、桌面界面与桌面伙伴
+│  ├─ src/                             TypeScript 运行投影与 UI
+│  └─ src-tauri/                       Rust 命令、ACL、资源与打包配置
 ├─ crates/
-│  ├─ lunascope-core/                 领域模型、事件、契约和状态机
-│  ├─ lunascope-storage/              SQLite 日志、投影、快照与恢复
-│  ├─ lunascope-integrations/         Provider、协议归一化、Keyring 与路由
-│  ├─ lunascope-runtime/              调度器、工具、worktree、浏览器与 UltraNote
-│  └─ lunascope-extensions/           Skills、GitHub 隔离导入与 MCP
-├─ packages/
-│  └─ runtime-contract/               从 Rust 生成的 TypeScript IPC 契约
-├─ prompts/                           LunaScope 系统提示词和专项 harness
-├─ docs/                              架构、决策、威胁模型与第三方声明
-├─ release/v0.1.0/                    本地二进制，以及纳入版本控制的校验值与发布说明
-├─ index.html                         当前桌面界面入口
-└─ indexV14.html                      保留的产品与交互设计参考
+│  ├─ lunascope-core/                  核心契约与状态机
+│  ├─ lunascope-storage/               SQLite 事件、对话与课程存储
+│  ├─ lunascope-integrations/          Provider 协议、凭据与路由
+│  ├─ lunascope-extensions/            Skills、MCP 与安全 GitHub 导入
+│  └─ lunascope-runtime/               调度器、工具、worktree、浏览器与 UltraNote
+├─ packages/runtime-contract/          生成的 TypeScript 与 JSON Schema
+├─ prompts/                            LunaScope 与各运行阶段的提示词
+├─ evals/                              Release 评测定义
+├─ scripts/                            仓库验证脚本
+├─ docs/                               架构、决策、风险与第三方声明
+├─ release/v0.3.1/                     发布说明与校验值
+├─ indexV14.html                       产品/UX 语义参考
+└─ README.md / README.zh-CN.md         英文与中文文档
 ```
 
-这种拆分不是为了把目录做得复杂。`lunascope-core` 不依赖 UI；提供商的不同协议在 `lunascope-integrations` 截止；权限、工具、worktree、浏览器和调度留在原生代码中；TypeScript 读取生成契约，而不是重新手写一份运行时状态。
+`indexV14.html` 只是产品和 UX 语义参考，不能当作某项运行能力已经实现的证据。
 
-## 运行 0.1.0
+## 安装与构建
 
-### 安装器
+### 安装 Windows 版本
 
-1. 下载 [`LunaScope_0.1.0_x64-setup.exe`](https://github.com/LagrangeNSS/LunaScope/releases/download/v0.1.0/LunaScope_0.1.0_x64-setup.exe)。
-2. 使用 [`SHA256SUMS.txt`](release/v0.1.0/SHA256SUMS.txt) 核对 SHA-256。
-3. 运行安装器；如果出现 SmartScreen，请确认文件来源和校验值后继续。
-4. 新建项目，选择一个或多个文件夹，并指定其中一个作为 workspace。
-5. 在设置中添加至少一个模型提供商。密钥通过原生遮罩输入保存。
+1. 下载 [0.3.1 安装器](https://github.com/LagrangeNSS/LunaScope/releases/download/v0.3.1/LunaScope_0.3.1_x64-setup.exe)。
+2. 使用 [`release/v0.3.1/SHA256SUMS.txt`](release/v0.3.1/SHA256SUMS.txt) 核对 SHA-256。
+3. 运行安装器。如果出现 SmartScreen，请先检查发布者提示和校验值。
+4. 添加一个或多个提供商配置，通过桌面设置安全保存 API 凭据，并在保存路由前测试每个选定模型/强度组合。
+5. 创建项目，选择关联文件夹与可写 workspace，然后新建对话。
 
-### 便携可执行文件
+### 从源码构建
 
-`lunascope-desktop.exe` 可用于直接评估。建议把它放在用户拥有写权限的普通文件夹中；LunaScope 的运行数据不会写入源码仓库。
+需要：
 
-## 从源码构建
-
-### 环境要求
-
-- Windows 10 或 Windows 11，x64
+- Windows 10 或 Windows 11
 - Rust stable 与 Cargo
-- Node.js 22，或其他受 Vite 8 支持的版本
-- npm
+- Node.js 20 或更高版本和 npm
 - Microsoft Edge WebView2 Runtime
-- 带 Windows 桌面 C++ 工具链的 Visual Studio Build Tools
-
-### 构建命令
+- Tauri 2 的 Windows 构建依赖
 
 ```powershell
 npm ci
-npm run contract:check
+cargo run -p lunascope-core --example export_contract
 npm run typecheck
-npm run build
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
+npm run contract:check
 cargo test --workspace
 npm run tauri -- build
 ```
 
-修改 Rust 领域类型后，使用下面的命令重新生成前端契约：
+安装器会生成在 `target/release/bundle/nsis/LunaScope_0.3.1_x64-setup.exe`。
 
-```powershell
-cargo run -p lunascope-core --example export_contract
-```
+## 0.3.1 验证记录
 
-生成的 TypeScript 与 JSON Schema 会进入仓库，并由契约测试检查是否和 Rust 主契约一致。
+本次 Release 使用公开源码快照构建，并通过以下本地门禁：
 
-## 工程成熟度
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo check --workspace`
+- `cargo test --workspace`
+- `npm run typecheck`
+- `npm run contract:check`
+- `npm run test:companion-assets`
+- `npm run evals:check`
+- `npm run build`
+- `npm run tauri -- build`
 
-0.1.0 不是只能展示界面的原型。当前源码已经包含并实际覆盖：
+确定性的 Rust 测试全部通过。需要付费 Provider 凭据、用户明确提供的测试资料路径、真实网络或持久化外部 workspace 的测试默认保持 ignored。`evals/manifest.json` 只定义了 12 组证据契约，并明确标记为 `defined_not_run`；它不是虚构的真实模型评测结果。
 
-| 领域 | 源码中的工程证据 |
-|---|---|
-| 运行时状态 | 版本化 Rust 事件、状态机、类型化 IPC、快照和恢复 |
-| 多 Agent | 依赖调度、有界并发、worktree 隔离、补丁交接和独立验收 |
-| 长任务 | 持久化上下文、Worker 历史压缩、精确错误续跑和带证据的阶段交接 |
-| 安全 | 有界权限、敏感路径硬拒绝、SHA-256 变更保护、导入扩展惰性处理和进程树取消 |
-| 提供商 | OpenAI Responses、OpenAI-compatible/DeepSeek Chat Completions、Anthropic 消息协议归一化 |
-| 验收 | 逐项证据账本、致命缺陷修复链路、本地浏览器执行和图形/运行时诊断 |
-| 文档能力 | 原生 PDF/Office 提取、有界附件、多模态路由和 UltraNote 输出链路 |
-| 质量门槛 | 格式化、Clippy 零警告、完整非忽略 Rust workspace 测试、契约检查、TypeScript 检查和生产前端构建 |
+## 安全、隐私与当前限制
 
-### 0.1.0 已知限制
+- workspace 访问受到路径约束；增加项目文件夹不会悄悄扩大写入范围。
+- 凭据保存在 Windows Credential Manager 中，软件内部只记录非敏感引用 ID。
+- 导入的扩展内容是不可信、固定版本、有界且在检查阶段不会被执行的资料。
+- 浏览器验收使用临时 workspace 副本、封闭回环网络、有界操作和进程超时。
+- 桌面端使用限制型 CSP、窄口径 Tauri ACL、Windows GUI subsystem 和隐藏的内部子进程。
+- LunaScope 0.3.1 仍是 Windows 优先且未签名的工程预览版。
+- 提供商和中转站行为可能不同；内置连接/能力测试才是当前配置能否使用的判断依据。
+- 真实 Provider 与多小时耐久 canary 不属于默认测试命令。
+- LunaScope 自身的分发许可证尚未确定。不能因为仓库公开就推断出一个开源许可证。
+- 部分科研 Skill 使用 CC BY-NC 4.0。商业再分发前请阅读 [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md)。
 
-- 当前只支持 Windows 桌面端。
-- Release 尚未进行代码签名。
-- LunaScope 自身的发行许可协议尚未确定。公开源码不代表自动授予法律允许范围之外的使用权；第三方组件继续遵循各自许可证。
-- 内置的 Imbad0202 学术研究 Skills 使用 CC BY-NC 4.0；商业发行前必须移除或取得单独许可。
-- HarmonyOS Sans SC 从本机 Windows 字体中读取，本仓库不重新分发字体文件。
-- 签名发布、长时间耐久性测试、严格生产 CSP 和剩余 Domain Pack 发布矩阵仍待完成。
+## 致谢与许可
 
-## 隐私与本地数据
+LunaScope 为独立实现。以下项目对架构有重要参考价值，或以独立许可提供了固定版本的资源：
 
-这个公开仓库不包含模型密钥、`.env`、Windows Credential 数据、运行时 SQLite 数据库、用户 workspace、课程资料、私人任务截图、浏览器 profile、日志、缓存或开发构建目录。
-
-实际运行时，提供商密钥通过 Windows Credential Manager 引用。GitHub 导入内容会先隔离检查并固定 commit；脚本与 hooks 保持惰性，除非未来存在单独授权的执行路径。即便开启 Full Access，模型和 WebView 也不会拿到已经存储的凭据值。
-
-详细边界见 [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) 与 [`docs/AGENT_RUNTIME_ARCHITECTURE.md`](docs/AGENT_RUNTIME_ARCHITECTURE.md)。
-
-## 开源项目引用与致谢
-
-LunaScope 是独立实现的项目，但它从优秀的开源生态中学到了很多。主要参考和内置组件包括：
-
-- [Tauri](https://github.com/tauri-apps/tauri)，Apache-2.0 / MIT
-- [OpenAI Codex](https://github.com/openai/codex)，Apache-2.0，架构参考
-- [OpenCode](https://github.com/anomalyco/opencode)，MIT，架构参考
-- [Model Context Protocol](https://github.com/modelcontextprotocol)，规范及参考实现遵循各自许可证
-- [OpenAI Skills](https://github.com/openai/skills)，Apache-2.0
-- [Anthropic Skills](https://github.com/anthropics/skills)，Apache-2.0
-- [obra/superpowers](https://github.com/obra/superpowers)，MIT
-- [Orchestra Research AI Research Skills](https://github.com/Orchestra-Research/AI-research-SKILLs)，MIT
-- [Imbad0202 Academic Research Skills](https://github.com/Imbad0202/academic-research-skills)，CC BY-NC 4.0
-- [K-Dense Scientific Agent Skills](https://github.com/K-Dense-AI/scientific-agent-skills)，MIT
-- [Agents365 Mermaid Skill](https://github.com/Agents365-ai/mermaid-skill)，MIT
+- [OpenAI Codex](https://github.com/openai/codex)，Apache-2.0：事件、工具与会话架构参考
+- [OpenCode](https://github.com/anomalyco/opencode)，MIT：消息流和 Provider 架构参考
+- [Pi](https://github.com/earendil-works/pi)，MIT：精简 Agent Loop 与 Provider 适配器参考
+- [Tauri](https://github.com/tauri-apps/tauri)，Apache-2.0/MIT
 - [Mermaid](https://github.com/mermaid-js/mermaid)，MIT
 - [KaTeX](https://github.com/KaTeX/KaTeX)，MIT
-- [Microsoft MarkItDown](https://github.com/microsoft/markitdown)，MIT，文档转换设计参考
+- [Microsoft MarkItDown](https://github.com/microsoft/markitdown)，MIT：文档转换设计参考
+- [Anionex codex-vision-proxy](https://github.com/Anionex/codex-vision-proxy)，MIT：独立视觉回退设计参考
+- [Orchestra Research AI Research Skills](https://github.com/Orchestra-Research/AI-research-SKILLs)，MIT
+- [Imbad0202 Academic Research Skills](https://github.com/Imbad0202/academic-research-skills)，CC BY-NC 4.0
+- [Agents365 Mermaid Skill](https://github.com/Agents365-ai/mermaid-skill)，MIT
+- [Live2D Cubism Web Samples](https://github.com/Live2D/CubismWebSamples)，Live2D sample terms
+- [PixiJS](https://github.com/pixijs/pixijs)，MIT；[pixi-live2d-display](https://github.com/guansss/pixi-live2d-display)，MIT；[Spine Runtimes](https://github.com/EsotericSoftware/spine-runtimes)，Spine Runtime License
 
-完整的固定版本、许可说明、字体条件和再发行提示位于 [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) 与内置 Skill 清单中。
+HarmonyOS Sans 按随附许可使用。完整上游版本、来源、许可证和再分发说明请查阅 [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md) 以及各 vendored 资源目录中的许可文件。
 
-## 项目状态与贡献
+## 参与开发
 
-第一次公开仓库的目标，是让 LunaScope 的架构可以被审阅，让 0.1.0 Windows 构建可以被复现。提交修改前，建议先阅读 Rust 契约边界和威胁模型。任何削弱凭据隔离、权限判断、持久化工具顺序、worktree 隔离或独立验收的修改，都应当被当作安全架构变更，而不是普通重构。
+请先阅读 Rust 契约边界、架构决策、风险登记和威胁模型。任何削弱凭据隔离、工具顺序、持久化事件语义、路径范围、权限校验、worktree 隔离或独立验证的改动，都属于安全敏感的架构变更，而不是普通 UI 调整。
 
-LunaScope 的中文项目名是 **望月者计划**。这个名字代表它想做的事：持续观察完整任务，而不是只关注模型的下一条回复。
+公开仓库的目的，是让实现可以被审阅，让 0.3.1 Windows 构建可以复现。项目许可证、代码签名和剩余长时间发布门禁仍被明确列为未完成事项，而不是用成熟度宣传掩盖。

@@ -2,7 +2,8 @@ use std::collections::HashSet;
 
 use lunascope_core::{
     ModelAssignment, ModelProfile, ModelRole, ModelRoutingDecision, ModelRoutingPolicy,
-    ModelRoutingRequest, ModelSelectionSettings, ProviderConfig,
+    ModelRoutingRequest, ModelSelectionSettings, ProviderConfig, ReasoningEffort,
+    reasoning_effort_override_key,
 };
 use thiserror::Error;
 
@@ -178,6 +179,20 @@ pub fn validate_model_selection_settings(
         return Err(RoutingError::InvalidOrchestrationRole);
     }
     validate_assignment(&settings.orchestration, providers)?;
+    if let Some(vision) = &settings.vision {
+        if vision.role != ModelRole::Vision {
+            return Err(RoutingError::InvalidVisionRole);
+        }
+        validate_assignment(vision, providers)?;
+        if !providers
+            .iter()
+            .any(|provider| provider.id == vision.provider_config_id && provider.supports_vision)
+        {
+            return Err(RoutingError::VisionProviderRequired(
+                vision.provider_config_id.clone(),
+            ));
+        }
+    }
     let mut roles = HashSet::new();
     for assignment in &settings.worker_pool {
         if assignment.role == ModelRole::Orchestration {
@@ -187,6 +202,47 @@ pub fn validate_model_selection_settings(
             return Err(RoutingError::DuplicateWorkerRole(assignment.role));
         }
         validate_assignment(assignment, providers)?;
+    }
+    validate_legacy_custom_reasoning_efforts(settings)?;
+    Ok(())
+}
+
+pub fn normalize_custom_reasoning_effort(
+    value: Option<&str>,
+) -> Result<Option<String>, RoutingError> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if value.len() > 32
+        || !value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "._-".contains(character))
+    {
+        return Err(RoutingError::InvalidCustomReasoningEffort(value.into()));
+    }
+    Ok(Some(value.to_owned()))
+}
+
+fn validate_legacy_custom_reasoning_efforts(
+    settings: &ModelSelectionSettings,
+) -> Result<(), RoutingError> {
+    let assignments = std::iter::once(&settings.orchestration)
+        .chain(settings.vision.iter())
+        .chain(settings.worker_pool.iter());
+    for (key, value) in &settings.custom_reasoning_efforts {
+        let assignment = assignments
+            .clone()
+            .find(|assignment| {
+                reasoning_effort_override_key(&assignment.provider_config_id, &assignment.model_id)
+                    == *key
+            })
+            .ok_or_else(|| RoutingError::OrphanCustomReasoningEffort(key.clone()))?;
+        normalize_custom_reasoning_effort(Some(value))?;
+        if assignment.reasoning_effort != ReasoningEffort::Auto {
+            return Err(RoutingError::CustomReasoningEffortRequiresAuto(
+                assignment.model_id.clone(),
+            ));
+        }
     }
     Ok(())
 }
@@ -201,14 +257,18 @@ fn validate_assignment(
     {
         return Err(RoutingError::InvalidModelAssignment(assignment.role));
     }
-    if !providers
+    let _provider = providers
         .iter()
-        .any(|provider| provider.id == assignment.provider_config_id && provider.enabled)
-    {
-        return Err(RoutingError::UnknownProviderConfig(
-            assignment.provider_config_id.clone(),
+        .find(|provider| provider.id == assignment.provider_config_id && provider.enabled)
+        .ok_or_else(|| {
+            RoutingError::UnknownProviderConfig(assignment.provider_config_id.clone())
+        })?;
+    if assignment.reasoning_effort != ReasoningEffort::Auto {
+        return Err(RoutingError::CustomReasoningEffortRequiresAuto(
+            assignment.model_id.clone(),
         ));
     }
+    normalize_custom_reasoning_effort(assignment.custom_reasoning_effort.as_deref())?;
     match (
         assignment.fallback_provider_config_id.as_deref(),
         assignment.fallback_model_id.as_deref(),
@@ -239,12 +299,24 @@ pub enum RoutingError {
     InvalidOrchestrationRole,
     #[error("the worker pool must not contain the orchestration role")]
     OrchestrationInWorkerPool,
+    #[error("the independent vision assignment must use the vision role")]
+    InvalidVisionRole,
+    #[error("the independent vision assignment references a non-vision provider config {0}")]
+    VisionProviderRequired(String),
     #[error("worker pool contains duplicate role {0:?}")]
     DuplicateWorkerRole(ModelRole),
     #[error("model assignment for {0:?} has an empty model or zero limit")]
     InvalidModelAssignment(ModelRole),
     #[error("model assignment references unavailable provider config {0}")]
     UnknownProviderConfig(String),
+    #[error("custom reasoning effort references an unassigned provider/model key {0}")]
+    OrphanCustomReasoningEffort(String),
+    #[error("custom reasoning effort must be 1-32 ASCII letters, digits, '.', '_' or '-': {0}")]
+    InvalidCustomReasoningEffort(String),
+    #[error(
+        "model assignments use only a custom provider-native effort; built-in effort must remain Auto: {0}"
+    )]
+    CustomReasoningEffortRequiresAuto(String),
     #[error("fallback for {0:?} must provide both provider config and model")]
     IncompleteFallback(ModelRole),
 }
@@ -321,7 +393,8 @@ mod tests {
             role,
             provider_config_id: "openai".into(),
             model_id: "gpt-test".into(),
-            reasoning_effort: ReasoningEffort::Medium,
+            custom_reasoning_effort: None,
+            reasoning_effort: ReasoningEffort::Auto,
             maximum_context_tokens: Some(64_000),
             maximum_budget_microusd: Some(10_000),
             fallback_provider_config_id: None,
@@ -335,16 +408,20 @@ mod tests {
         let providers = vec![provider_config("openai")];
         let valid = ModelSelectionSettings {
             orchestration: assignment(ModelRole::Orchestration),
+            vision: None,
             worker_pool: vec![assignment(ModelRole::Programming)],
+            custom_reasoning_efforts: Default::default(),
         };
         validate_model_selection_settings(&valid, &providers).expect("valid settings");
 
         let duplicate = ModelSelectionSettings {
             orchestration: assignment(ModelRole::Orchestration),
+            vision: None,
             worker_pool: vec![
                 assignment(ModelRole::Programming),
                 assignment(ModelRole::Programming),
             ],
+            custom_reasoning_efforts: Default::default(),
         };
         assert!(matches!(
             validate_model_selection_settings(&duplicate, &providers),
@@ -357,11 +434,97 @@ mod tests {
             validate_model_selection_settings(
                 &ModelSelectionSettings {
                     orchestration: assignment(ModelRole::Orchestration),
+                    vision: None,
                     worker_pool: vec![unknown],
+                    custom_reasoning_efforts: Default::default(),
                 },
                 &providers
             ),
             Err(RoutingError::UnknownProviderConfig(id)) if id == "missing"
+        ));
+    }
+
+    #[test]
+    fn independent_vision_assignment_requires_a_vision_capable_provider() {
+        let mut text_only = provider_config("text-only");
+        text_only.supports_vision = false;
+        let mut vision = assignment(ModelRole::Vision);
+        vision.provider_config_id = text_only.id.clone();
+        let settings = ModelSelectionSettings {
+            orchestration: assignment(ModelRole::Orchestration),
+            vision: Some(vision),
+            worker_pool: vec![assignment(ModelRole::Programming)],
+            custom_reasoning_efforts: Default::default(),
+        };
+        assert!(matches!(
+            validate_model_selection_settings(&settings, &[provider_config("openai"), text_only]),
+            Err(RoutingError::VisionProviderRequired(id)) if id == "text-only"
+        ));
+    }
+
+    #[test]
+    fn saved_assignments_use_only_provider_native_custom_effort() {
+        let mut deepseek = provider_config("deepseek");
+        deepseek.provider_type = ProviderType::DeepSeek;
+        deepseek.protocol = ProviderProtocol::OpenAiChatCompletions;
+        deepseek.default_model_id = "deepseek-v4-flash".into();
+
+        let mut orchestration = assignment(ModelRole::Orchestration);
+        orchestration.provider_config_id = deepseek.id.clone();
+        orchestration.model_id = deepseek.default_model_id.clone();
+        orchestration.custom_reasoning_effort = Some("max".into());
+        validate_model_selection_settings(
+            &ModelSelectionSettings {
+                orchestration,
+                vision: None,
+                worker_pool: Vec::new(),
+                custom_reasoning_efforts: Default::default(),
+            },
+            &[deepseek.clone()],
+        )
+        .expect("syntactically valid Provider-native effort");
+
+        let mut deprecated = assignment(ModelRole::Orchestration);
+        deprecated.provider_config_id = deepseek.id.clone();
+        deprecated.model_id = deepseek.default_model_id.clone();
+        deprecated.reasoning_effort = ReasoningEffort::High;
+        assert!(matches!(
+            validate_model_selection_settings(
+                &ModelSelectionSettings {
+                    orchestration: deprecated,
+                    vision: None,
+                    worker_pool: Vec::new(),
+                    custom_reasoning_efforts: Default::default(),
+                },
+                &[deepseek],
+            ),
+            Err(RoutingError::CustomReasoningEffortRequiresAuto(model)) if model == "deepseek-v4-flash"
+        ));
+    }
+
+    #[test]
+    fn unknown_model_accepts_a_valid_user_effort_override_only() {
+        let mut compatible = provider_config("compatible");
+        compatible.provider_type = ProviderType::GenericOpenAiCompatible;
+        let mut orchestration = assignment(ModelRole::Orchestration);
+        orchestration.provider_config_id = compatible.id.clone();
+        orchestration.model_id = "future-model".into();
+        orchestration.reasoning_effort = ReasoningEffort::Auto;
+        orchestration.custom_reasoning_effort = Some("ultra".into());
+        let settings = ModelSelectionSettings {
+            orchestration,
+            vision: None,
+            worker_pool: Vec::new(),
+            custom_reasoning_efforts: Default::default(),
+        };
+        validate_model_selection_settings(&settings, &[compatible.clone()])
+            .expect("user-confirmed custom compatible effort");
+
+        let mut invalid = settings.clone();
+        invalid.orchestration.custom_reasoning_effort = Some("bad value".into());
+        assert!(matches!(
+            validate_model_selection_settings(&invalid, &[compatible]),
+            Err(RoutingError::InvalidCustomReasoningEffort(_))
         ));
     }
 

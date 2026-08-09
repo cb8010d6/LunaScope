@@ -663,6 +663,7 @@ impl GithubImportManager {
         S: AsRef<OsStr>,
     {
         let mut command = Command::new(&self.git_program);
+        crate::hide_console_window(&mut command);
         command
             .arg("-c")
             .arg("core.hooksPath=NUL")
@@ -1126,14 +1127,13 @@ fn validate_commit_sha(value: &str) -> Result<(), GithubImportError> {
 
 fn resolve_git() -> Result<PathBuf, GithubImportError> {
     let system_root = std::env::var_os("SystemRoot").ok_or(GithubImportError::GitNotAvailable)?;
-    let output = Command::new(
+    let mut command = Command::new(
         PathBuf::from(system_root)
             .join("System32")
             .join("where.exe"),
-    )
-    .arg("git.exe")
-    .stdin(Stdio::null())
-    .output()?;
+    );
+    crate::hide_console_window(&mut command);
+    let output = command.arg("git.exe").stdin(Stdio::null()).output()?;
     if !output.status.success() {
         return Err(GithubImportError::GitNotAvailable);
     }

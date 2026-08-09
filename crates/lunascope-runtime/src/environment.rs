@@ -148,7 +148,9 @@ pub fn resolve_program_on_path(candidates: &[&str]) -> Option<PathBuf> {
                 continue;
             };
             let where_exe = PathBuf::from(system_root).join("System32/where.exe");
-            let Ok(output) = Command::new(where_exe)
+            let mut command = Command::new(where_exe);
+            crate::hide_console_window(&mut command);
+            let Ok(output) = command
                 .arg(format!("$PATH:{candidate}"))
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
@@ -193,7 +195,9 @@ pub fn resolve_program_on_path(candidates: &[&str]) -> Option<PathBuf> {
 }
 
 fn program_version(path: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new(path)
+    let mut command = Command::new(path);
+    crate::hide_console_window(&mut command);
+    let output = command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

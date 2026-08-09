@@ -90,6 +90,7 @@ pub struct WorkerCheckpointPolicy {
 #[serde(rename_all = "snake_case")]
 #[ts(rename_all = "snake_case")]
 pub enum WorkerField {
+    DisplayName,
     Role,
     Tags,
     Objective,
@@ -99,6 +100,8 @@ pub enum WorkerField {
     ExpectedOutput,
     OutputSchema,
     CompletionCriteria,
+    OwnedAcceptanceCriteria,
+    ParallelGroup,
     Model,
     Skills,
     Tools,
@@ -128,6 +131,7 @@ pub enum OrchestrationPatchApplyMode {
 #[ts(rename_all = "camelCase")]
 pub struct WorkerPatch {
     pub worker_id: WorkerId,
+    pub display_name: Option<String>,
     pub role: Option<String>,
     pub tags: Option<Vec<String>>,
     pub objective: Option<String>,
@@ -137,6 +141,8 @@ pub struct WorkerPatch {
     pub expected_output: Option<String>,
     pub output_schema: Option<WorkerOutputSchema>,
     pub completion_criteria: Option<Vec<String>>,
+    pub owned_acceptance_criteria: Option<Vec<String>>,
+    pub parallel_group: Option<Option<String>>,
     pub model: Option<ModelSelection>,
     pub skills: Option<Vec<String>>,
     pub tools: Option<Vec<String>>,

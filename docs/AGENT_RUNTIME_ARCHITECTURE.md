@@ -23,6 +23,14 @@ The native Provider Worker loop now:
 - bounds durable tool evidence and model-visible tool output separately;
 - compacts older settled turns without discarding the latest turn or changing the real workspace.
 
+Three adaptive layers now sit around that loop:
+
+- a model-aware effort profile maps the Rust reasoning contract to each Provider's native wire shape;
+- a fail-closed independent vision stage turns bounded visual assets into inert, focus-aware evidence for text-only models;
+- the Orchestration model reviews bounded settled-tool checkpoints and can guide or replan existing unfinished Workers at their next safe boundary.
+
+Provider-private reasoning fields are never shown as UI reasoning. DeepSeek's private `reasoning_content` is held in memory only for the directly linked assistant-tool/result continuation required by its protocol. User-visible reasoning remains either a Provider-authored reasoning summary or explicit model commentary with observable evidence.
+
 The desktop projection converts those settled facts into two presentation layers:
 
 - a natural-language conversation narrative for meaningful milestones and concrete operations;

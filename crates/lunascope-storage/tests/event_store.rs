@@ -276,6 +276,7 @@ fn provider_metadata_and_routing_policy_survive_restart() {
             role: ModelRole::Orchestration,
             provider_config_id: config.id.clone(),
             model_id: config.default_model_id.clone(),
+            custom_reasoning_effort: None,
             reasoning_effort: ReasoningEffort::High,
             maximum_context_tokens: Some(128_000),
             maximum_budget_microusd: Some(50_000),
@@ -283,10 +284,12 @@ fn provider_metadata_and_routing_policy_survive_restart() {
             fallback_model_id: None,
             locked: true,
         },
+        vision: None,
         worker_pool: vec![ModelAssignment {
             role: ModelRole::Programming,
             provider_config_id: config.id.clone(),
             model_id: config.default_model_id.clone(),
+            custom_reasoning_effort: None,
             reasoning_effort: ReasoningEffort::Medium,
             maximum_context_tokens: Some(64_000),
             maximum_budget_microusd: Some(20_000),
@@ -294,6 +297,7 @@ fn provider_metadata_and_routing_policy_survive_restart() {
             fallback_model_id: None,
             locked: false,
         }],
+        custom_reasoning_efforts: Default::default(),
     };
     {
         let store = SqliteEventStore::open(&path).expect("store");

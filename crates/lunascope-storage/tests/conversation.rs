@@ -1,5 +1,6 @@
 use lunascope_core::{
-    ConversationMessage, ConversationRole, ProjectId, RunId, ThreadContextSummary, ThreadId,
+    ConversationMessage, ConversationRole, ConversationThread, ProjectId, RunContinuationSummary,
+    RunId, ThreadContextSummary, ThreadId,
 };
 use lunascope_storage::SqliteEventStore;
 
@@ -15,6 +16,56 @@ fn message(id: &str, role: ConversationRole, content: &str) -> ConversationMessa
         context_content: None,
         created_at: "2026-08-01T00:00:00Z".to_owned(),
     }
+}
+
+#[test]
+fn conversation_identity_and_run_continuation_survive_reopen() {
+    let temporary = tempfile::tempdir().expect("temporary database");
+    let database = temporary.path().join("conversation.db");
+    let store = SqliteEventStore::open(&database).expect("open store");
+    let thread = ConversationThread {
+        thread_id: ThreadId::from("thread-context"),
+        project_id: ProjectId::from("project-context"),
+        title: "Long-running project".into(),
+        active_run_id: Some(RunId::from("run-context")),
+        context_revision: 3,
+        created_at: "2026-08-01T00:00:00Z".into(),
+        updated_at: "2026-08-01T00:02:00Z".into(),
+    };
+    store
+        .save_conversation_thread(&thread)
+        .expect("persist conversation identity");
+    let continuation = RunContinuationSummary {
+        thread_id: thread.thread_id.clone(),
+        run_id: RunId::from("run-context"),
+        revision: 4,
+        goals: vec!["Complete the same workspace project".into()],
+        constraints: vec!["Preserve prior files".into()],
+        completed_changes: vec!["Created src/core.rs".into()],
+        workspace_state: vec!["src/core.rs · sha256".into()],
+        evidence: vec!["cargo test passed".into()],
+        unresolved_items: vec!["Add browser verification".into()],
+        next_actions: vec!["Run browser verification".into()],
+        created_at: "2026-08-01T00:02:00Z".into(),
+    };
+    store
+        .save_run_continuation_summary(&continuation)
+        .expect("persist continuation");
+    drop(store);
+
+    let reopened = SqliteEventStore::open(&database).expect("reopen store");
+    let threads = reopened
+        .conversation_threads("project-context")
+        .expect("load conversations");
+    assert_eq!(threads.len(), 1);
+    assert_eq!(threads[0].title, "Long-running project");
+    assert_eq!(threads[0].context_revision, 4);
+    assert_eq!(
+        reopened
+            .latest_run_continuation_summary("thread-context")
+            .expect("load continuation"),
+        Some(continuation)
+    );
 }
 
 #[test]

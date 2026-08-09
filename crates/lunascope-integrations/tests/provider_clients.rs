@@ -158,7 +158,7 @@ async fn deepseek_openai_compatible_client_normalizes_usage() {
     let request = server.await.unwrap();
     assert_eq!(summary.text, "DeepSeek");
     assert_eq!(summary.usage.output_tokens, Some(3));
-    assert!(request.contains("POST /chat/completions HTTP/1.1"));
+    assert!(request.contains("POST /v1/chat/completions HTTP/1.1"));
     assert!(request.contains("\"stream_options\":{\"include_usage\":true}"));
     assert!(request.contains("\"thinking\":{\"type\":\"disabled\"}"));
 }

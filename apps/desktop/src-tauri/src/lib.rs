@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -12,8 +12,8 @@ use lunascope_core::{
     LoadedSkill, McpConfigValue, McpInvocationResult, McpServerConfig, McpServerStatus,
     McpTransportConfig, ModelRoutingPolicy, ModelSelectionSettings, NaturalLanguageRoutingDraft,
     PermissionContext, PermissionKind, PermissionRequest, PolicyDecision, ProjectId,
-    ProviderConfig, ProviderType, RiskLevel, RunId, RuntimeDelta, RuntimeSnapshot, SkillSourceKind,
-    SkillSummary, ThreadId, ToolManifest, ToolRoutingDecision, ToolRoutingRequest,
+    ProviderConfig, ReasoningEffort, RiskLevel, RunId, RuntimeDelta, RuntimeSnapshot,
+    SkillSourceKind, SkillSummary, ThreadId, ToolManifest, ToolRoutingDecision, ToolRoutingRequest,
 };
 use lunascope_extensions::{
     GithubImportManager, McpCredentialStore, McpSecretValue, NativeMcpClient, SkillCatalog,
@@ -21,8 +21,8 @@ use lunascope_extensions::{
 };
 use lunascope_integrations::{
     KeyringCredentialStore, NativeProviderClient, ProviderInvocation, ProviderMessage,
-    ProviderMessageRole, SecretValue, parse_routing_preference, validate_model_selection_settings,
-    validate_provider_config, validate_routing_policy,
+    ProviderMessageRole, SecretValue, normalize_custom_reasoning_effort, parse_routing_preference,
+    validate_model_selection_settings, validate_provider_config, validate_routing_policy,
 };
 use lunascope_runtime::{PolicyEngine, ToolRouter};
 use lunascope_storage::SqliteEventStore;
@@ -46,6 +46,8 @@ pub(crate) struct AppState {
     pub(crate) credentials: KeyringCredentialStore,
     mcp_credentials: McpCredentialStore,
     pub(crate) active_orchestration: Mutex<Option<orchestration::ActiveOrchestrationInvocation>>,
+    pub(crate) vision_description_cache: Arc<Mutex<BTreeMap<String, String>>>,
+    verified_reasoning_configs: Mutex<BTreeSet<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -236,6 +238,11 @@ fn save_provider_config(
         }
         return Err(display_error(error));
     }
+    state
+        .verified_reasoning_configs
+        .lock()
+        .map_err(|_| "reasoning test registry is unavailable".to_owned())?
+        .clear();
     Ok(())
 }
 
@@ -244,7 +251,16 @@ fn delete_provider_credential(
     state: State<'_, AppState>,
     reference: CredentialReference,
 ) -> Result<(), String> {
-    state.credentials.delete(&reference).map_err(display_error)
+    state
+        .credentials
+        .delete(&reference)
+        .map_err(display_error)?;
+    state
+        .verified_reasoning_configs
+        .lock()
+        .map_err(|_| "reasoning test registry is unavailable".to_owned())?
+        .clear();
+    Ok(())
 }
 
 #[tauri::command]
@@ -262,6 +278,11 @@ async fn test_provider_connection(
         .ok_or_else(|| format!("provider configuration not found: {provider_config_id}"))?;
     let client =
         NativeProviderClient::from_keyring(&config, &state.credentials).map_err(display_error)?;
+    let thinking_enabled = orchestration::provider_thinking_enabled(
+        &config,
+        &model,
+        lunascope_core::ReasoningEffort::None,
+    );
     let summary = client
         .stream(
             &ProviderInvocation {
@@ -273,8 +294,7 @@ async fn test_provider_connection(
                 }],
                 tools: Vec::new(),
                 max_output_tokens: 16,
-                thinking_enabled: (config.provider_type == lunascope_core::ProviderType::DeepSeek)
-                    .then_some(false),
+                thinking_enabled,
                 reasoning_effort: None,
                 reasoning_summary: None,
             },
@@ -284,6 +304,174 @@ async fn test_provider_connection(
         )
         .await
         .map_err(display_error)?;
+    Ok(ProviderConnectionResult {
+        response_id: summary.response_id,
+        text: summary.text,
+        input_tokens: summary.usage.input_tokens,
+        output_tokens: summary.usage.output_tokens,
+    })
+}
+
+fn reasoning_test_key(
+    provider_config_id: &str,
+    model: &str,
+    custom_reasoning_effort: Option<&str>,
+) -> Result<String, String> {
+    let provider_config_id = provider_config_id.trim();
+    let model = model.trim();
+    if provider_config_id.is_empty() || model.is_empty() {
+        return Err("provider configuration ID and model ID are required".into());
+    }
+    let effort = normalize_custom_reasoning_effort(custom_reasoning_effort)
+        .map_err(display_error)?
+        .unwrap_or_else(|| "<auto>".into());
+    Ok(format!("{provider_config_id}\0{model}\0{effort}"))
+}
+
+fn assignment_custom_reasoning_effort(
+    settings: &ModelSelectionSettings,
+    assignment: &lunascope_core::ModelAssignment,
+) -> Result<Option<String>, String> {
+    let legacy_key = lunascope_core::reasoning_effort_override_key(
+        &assignment.provider_config_id,
+        &assignment.model_id,
+    );
+    let value = assignment
+        .custom_reasoning_effort
+        .as_deref()
+        .or_else(|| {
+            settings
+                .custom_reasoning_efforts
+                .get(&legacy_key)
+                .map(String::as_str)
+        })
+        .or_else(|| {
+            (assignment.reasoning_effort != ReasoningEffort::Auto)
+                .then(|| assignment.reasoning_effort.as_str())
+        });
+    normalize_custom_reasoning_effort(value).map_err(display_error)
+}
+
+fn reasoning_configurations(
+    settings: &ModelSelectionSettings,
+) -> Result<BTreeMap<String, String>, String> {
+    let mut configurations = BTreeMap::new();
+    for assignment in std::iter::once(&settings.orchestration)
+        .chain(settings.vision.iter())
+        .chain(settings.worker_pool.iter())
+    {
+        let effort = assignment_custom_reasoning_effort(settings, assignment)?;
+        let key = reasoning_test_key(
+            &assignment.provider_config_id,
+            &assignment.model_id,
+            effort.as_deref(),
+        )?;
+        configurations.entry(key).or_insert_with(|| {
+            format!(
+                "{} / {} / {}",
+                assignment.provider_config_id.trim(),
+                assignment.model_id.trim(),
+                effort.as_deref().unwrap_or("Auto")
+            )
+        });
+    }
+    Ok(configurations)
+}
+
+fn require_tested_reasoning_configurations(
+    proposed: &ModelSelectionSettings,
+    verified: &BTreeSet<String>,
+) -> Result<(), String> {
+    let proposed = reasoning_configurations(proposed)?;
+    let missing = proposed
+        .iter()
+        .filter(|(key, _)| !verified.contains(*key))
+        .map(|(_, description)| description.clone())
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "MODEL_REASONING_TEST_REQUIRED:{}",
+            missing.join("; ")
+        ))
+    }
+}
+
+#[tauri::command]
+async fn test_model_reasoning_config(
+    state: State<'_, AppState>,
+    provider_config_id: String,
+    model: String,
+    custom_reasoning_effort: Option<String>,
+) -> Result<ProviderConnectionResult, String> {
+    test_model_reasoning_config_with_state(
+        state.inner(),
+        provider_config_id,
+        model,
+        custom_reasoning_effort,
+    )
+    .await
+}
+
+async fn test_model_reasoning_config_with_state(
+    state: &AppState,
+    provider_config_id: String,
+    model: String,
+    custom_reasoning_effort: Option<String>,
+) -> Result<ProviderConnectionResult, String> {
+    let config = state
+        .store
+        .provider_configs()
+        .map_err(display_error)?
+        .into_iter()
+        .find(|config| config.enabled && config.id == provider_config_id)
+        .ok_or_else(|| format!("enabled provider configuration not found: {provider_config_id}"))?;
+    let custom = normalize_custom_reasoning_effort(custom_reasoning_effort.as_deref())
+        .map_err(display_error)?;
+    let test_key = reasoning_test_key(&provider_config_id, &model, custom.as_deref())?;
+    let client =
+        NativeProviderClient::from_keyring(&config, &state.credentials).map_err(display_error)?;
+    let fallback_thinking =
+        orchestration::provider_thinking_enabled(&config, &model, ReasoningEffort::Auto);
+    let summary = client
+        .stream(
+            &ProviderInvocation {
+                model: model.clone(),
+                instructions: Some(
+                    "This is a model and reasoning-effort compatibility test. Reply with exactly: OK"
+                        .into(),
+                ),
+                messages: vec![ProviderMessage {
+                    role: ProviderMessageRole::User,
+                    content: serde_json::json!("Compatibility test"),
+                }],
+                tools: Vec::new(),
+                // Reasoning models may consume a small output allowance before
+                // emitting the requested compatibility token. Keep this bounded
+                // but large enough that a valid high-effort model can answer.
+                max_output_tokens: 256,
+                thinking_enabled: orchestration::thinking_toggle_with_override(
+                    fallback_thinking,
+                    custom.as_deref(),
+                ),
+                reasoning_effort: orchestration::reasoning_effort_parameter_with_override(
+                    ReasoningEffort::Auto,
+                    custom.as_deref(),
+                ),
+                reasoning_summary: Some("auto".into()),
+            },
+            std::time::Duration::from_secs(45),
+            CancellationToken::new(),
+            |_| Ok(()),
+        )
+        .await
+        .map_err(display_error)?;
+    state
+        .verified_reasoning_configs
+        .lock()
+        .map_err(|_| "reasoning test registry is unavailable".to_owned())?
+        .insert(test_key);
     Ok(ProviderConnectionResult {
         response_id: summary.response_id,
         text: summary.text,
@@ -333,7 +521,8 @@ async fn parse_model_preference_with_state(
         return Err("routing preference is required".to_owned());
     }
     let providers = state.store.provider_configs().map_err(display_error)?;
-    let (provider, model) = orchestration::selected_orchestration_model(state, &providers)?;
+    let (provider, model, effort, custom_effort) =
+        orchestration::selected_orchestration_model(state, &providers)?;
     enforce_permissions(
         &[
             PermissionRequest {
@@ -366,6 +555,10 @@ async fn parse_model_preference_with_state(
     )?;
     let client =
         NativeProviderClient::from_keyring(&provider, &state.credentials).map_err(display_error)?;
+    let thinking_enabled = orchestration::thinking_toggle_with_override(
+        orchestration::provider_thinking_enabled(&provider, &model, effort),
+        custom_effort.as_deref(),
+    );
     let prompt = format!(
         "User routing preference:\n{}\n\nExisting policy JSON (preserve fields the user did not change):\n{}",
         source.trim(),
@@ -385,9 +578,11 @@ async fn parse_model_preference_with_state(
                 }],
                 tools: Vec::new(),
                 max_output_tokens: 3_500,
-                thinking_enabled: (provider.provider_type == ProviderType::DeepSeek)
-                    .then_some(false),
-                reasoning_effort: Some("high".to_owned()),
+                thinking_enabled,
+                reasoning_effort: orchestration::reasoning_effort_parameter_with_override(
+                    effort,
+                    custom_effort.as_deref(),
+                ),
                 reasoning_summary: None,
             },
             std::time::Duration::from_secs(60),
@@ -490,10 +685,54 @@ fn get_model_selection_settings(
     state: State<'_, AppState>,
     scope_id: String,
 ) -> Result<Option<ModelSelectionSettings>, String> {
-    state
+    let Some(mut settings) = state
         .store
         .model_selection_settings(&scope_id)
-        .map_err(display_error)
+        .map_err(display_error)?
+    else {
+        return Ok(None);
+    };
+    let mut changed = false;
+    let legacy_efforts = settings.custom_reasoning_efforts.clone();
+    for assignment in std::iter::once(&mut settings.orchestration)
+        .chain(settings.vision.iter_mut())
+        .chain(settings.worker_pool.iter_mut())
+    {
+        let legacy_key = lunascope_core::reasoning_effort_override_key(
+            &assignment.provider_config_id,
+            &assignment.model_id,
+        );
+        if assignment.custom_reasoning_effort.is_none() {
+            assignment.custom_reasoning_effort =
+                legacy_efforts.get(&legacy_key).cloned().or_else(|| {
+                    (assignment.reasoning_effort != ReasoningEffort::Auto)
+                        .then(|| assignment.reasoning_effort.as_str().to_owned())
+                });
+            changed |= assignment.custom_reasoning_effort.is_some();
+        }
+        let normalized =
+            normalize_custom_reasoning_effort(assignment.custom_reasoning_effort.as_deref())
+                .map_err(display_error)?;
+        if assignment.custom_reasoning_effort != normalized {
+            assignment.custom_reasoning_effort = normalized;
+            changed = true;
+        }
+        if assignment.reasoning_effort != ReasoningEffort::Auto {
+            assignment.reasoning_effort = ReasoningEffort::Auto;
+            changed = true;
+        }
+    }
+    if !settings.custom_reasoning_efforts.is_empty() {
+        settings.custom_reasoning_efforts.clear();
+        changed = true;
+    }
+    if changed {
+        state
+            .store
+            .save_model_selection_settings(&scope_id, &settings)
+            .map_err(display_error)?;
+    }
+    Ok(Some(settings))
 }
 
 #[tauri::command]
@@ -502,8 +741,22 @@ fn save_model_selection_settings(
     scope_id: String,
     settings: ModelSelectionSettings,
 ) -> Result<(), String> {
+    save_model_selection_settings_with_state(state.inner(), scope_id, settings)
+}
+
+fn save_model_selection_settings_with_state(
+    state: &AppState,
+    scope_id: String,
+    settings: ModelSelectionSettings,
+) -> Result<(), String> {
     let providers = state.store.provider_configs().map_err(display_error)?;
     validate_model_selection_settings(&settings, &providers).map_err(display_error)?;
+    let verified = state
+        .verified_reasoning_configs
+        .lock()
+        .map_err(|_| "reasoning test registry is unavailable".to_owned())?;
+    require_tested_reasoning_configurations(&settings, &verified)?;
+    drop(verified);
     state
         .store
         .save_model_selection_settings(&scope_id, &settings)
@@ -1279,6 +1532,8 @@ pub fn run() {
                 credentials: KeyringCredentialStore,
                 mcp_credentials: McpCredentialStore,
                 active_orchestration: Mutex::new(None),
+                vision_description_cache: Arc::new(Mutex::new(BTreeMap::new())),
+                verified_reasoning_configs: Mutex::new(BTreeSet::new()),
             });
             companion::restore_window_visibility(app.handle());
             Ok(())
@@ -1292,6 +1547,7 @@ pub fn run() {
             save_provider_config,
             delete_provider_credential,
             test_provider_connection,
+            test_model_reasoning_config,
             get_routing_policy,
             save_routing_policy,
             parse_model_preference,
@@ -1338,6 +1594,7 @@ pub fn run() {
             companion::models::companion_activate_installed_model,
             companion::models::companion_remove_installed_model,
             orchestration::draft_native_orchestration,
+            orchestration::list_conversation_threads,
             orchestration::list_conversation_messages,
             orchestration::list_domain_packs,
             orchestration::patch_native_orchestration,
@@ -1413,6 +1670,52 @@ mod tests {
             .expect("repository root")
             .to_string_lossy()
             .into_owned()
+    }
+
+    fn reasoning_settings(effort: Option<&str>) -> ModelSelectionSettings {
+        ModelSelectionSettings {
+            orchestration: lunascope_core::ModelAssignment {
+                role: lunascope_core::ModelRole::Orchestration,
+                provider_config_id: "deepseek-primary".into(),
+                model_id: "deepseek-v4-flash".into(),
+                custom_reasoning_effort: effort.map(str::to_owned),
+                reasoning_effort: ReasoningEffort::Auto,
+                maximum_context_tokens: None,
+                maximum_budget_microusd: None,
+                fallback_provider_config_id: None,
+                fallback_model_id: None,
+                locked: false,
+            },
+            vision: None,
+            worker_pool: Vec::new(),
+            custom_reasoning_efforts: Default::default(),
+        }
+    }
+
+    #[test]
+    fn every_saved_reasoning_configuration_requires_the_exact_successful_test() {
+        let high = reasoning_settings(Some("high"));
+        let missing = require_tested_reasoning_configurations(&high, &BTreeSet::new())
+            .expect_err("untested new configuration");
+        assert!(missing.starts_with("MODEL_REASONING_TEST_REQUIRED:"));
+
+        let key = reasoning_test_key("deepseek-primary", "deepseek-v4-flash", Some("high"))
+            .expect("test key");
+        require_tested_reasoning_configurations(&high, &[key].into_iter().collect())
+            .expect("exact tested configuration");
+
+        let max = reasoning_settings(Some("max"));
+        assert!(require_tested_reasoning_configurations(&max, &BTreeSet::new()).is_err());
+    }
+
+    #[test]
+    fn custom_effort_is_bounded_and_blank_means_provider_default() {
+        assert_eq!(
+            reasoning_test_key("provider", "model", None).expect("auto"),
+            "provider\0model\0<auto>"
+        );
+        assert!(reasoning_test_key("provider", "model", Some("xhigh")).is_ok());
+        assert!(reasoning_test_key("provider", "model", Some("bad value")).is_err());
     }
 
     #[test]
@@ -1507,6 +1810,32 @@ mod tests {
     }
 
     #[test]
+    fn every_registered_app_command_is_allowed_by_the_main_window_acl() {
+        let build_script = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/build.rs"));
+        let command_block = build_script
+            .split_once(".commands(&[")
+            .and_then(|(_, remainder)| remainder.split_once("]),"))
+            .map(|(commands, _)| commands)
+            .expect("Tauri command manifest block");
+        let main_permissions = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/permissions/main-app-commands.toml"
+        ));
+
+        let missing = command_block
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix('"'))
+            .filter_map(|line| line.split_once('"').map(|(command, _)| command))
+            .map(|command| format!("allow-{}", command.replace('_', "-")))
+            .filter(|permission| !main_permissions.contains(&format!("\"{permission}\"")))
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "registered Tauri commands missing from main-window ACL: {missing:?}"
+        );
+    }
+
+    #[test]
     fn bundled_system_skill_seed_reconciles_stale_files() {
         let temporary = tempfile::tempdir().expect("temporary system Skill root");
         let stale = temporary.path().join("obsolete").join("STALE.md");
@@ -1563,7 +1892,68 @@ mod tests {
         );
         assert_eq!(
             draft.policy.role_preferences[0].preferred_providers,
-            vec![ProviderType::DeepSeek]
+            vec![lunascope_core::ProviderType::DeepSeek]
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the user's configured DeepSeek credential and live network access"]
+    fn deepseek_v4_flash_custom_effort_test_unlocks_save() {
+        let store = Arc::new(SqliteEventStore::open_in_memory().expect("event store"));
+        store
+            .save_provider_config(&ProviderConfig {
+                id: "deepseek-primary".to_owned(),
+                provider_type: lunascope_core::ProviderType::DeepSeek,
+                protocol: lunascope_core::ProviderProtocol::OpenAiChatCompletions,
+                display_name: "DeepSeek official".to_owned(),
+                base_url: "https://api.deepseek.com".to_owned(),
+                credential_reference_id: "deepseek-primary".to_owned(),
+                default_model_id: "deepseek-v4-flash".to_owned(),
+                custom_headers: Vec::new(),
+                context_window_tokens: None,
+                supports_tools: true,
+                supports_vision: false,
+                supports_structured_output: true,
+                enabled: true,
+            })
+            .expect("provider config");
+        let state = AppState {
+            store: Arc::clone(&store),
+            credentials: KeyringCredentialStore,
+            mcp_credentials: McpCredentialStore,
+            active_orchestration: Mutex::new(None),
+            vision_description_cache: Arc::new(Mutex::new(BTreeMap::new())),
+            verified_reasoning_configs: Mutex::new(BTreeSet::new()),
+        };
+        let settings = reasoning_settings(Some("high"));
+
+        let blocked =
+            save_model_selection_settings_with_state(&state, "global".into(), settings.clone())
+                .expect_err("untested configuration must be blocked");
+        assert!(blocked.starts_with("MODEL_REASONING_TEST_REQUIRED:"));
+
+        let response = tauri::async_runtime::block_on(test_model_reasoning_config_with_state(
+            &state,
+            "deepseek-primary".into(),
+            "deepseek-v4-flash".into(),
+            Some("high".into()),
+        ))
+        .expect("real model and effort test");
+        assert!(!response.text.trim().is_empty());
+
+        save_model_selection_settings_with_state(&state, "global".into(), settings)
+            .expect("tested configuration saves");
+        let persisted = store
+            .model_selection_settings("global")
+            .expect("stored settings")
+            .expect("settings exist");
+        assert_eq!(
+            persisted.orchestration.custom_reasoning_effort.as_deref(),
+            Some("high")
+        );
+        assert_eq!(
+            persisted.orchestration.reasoning_effort,
+            ReasoningEffort::Auto
         );
     }
 
@@ -1574,7 +1964,7 @@ mod tests {
         store
             .save_provider_config(&ProviderConfig {
                 id: "deepseek-primary".to_owned(),
-                provider_type: ProviderType::DeepSeek,
+                provider_type: lunascope_core::ProviderType::DeepSeek,
                 protocol: lunascope_core::ProviderProtocol::OpenAiChatCompletions,
                 display_name: "DeepSeek official".to_owned(),
                 base_url: "https://api.deepseek.com".to_owned(),
@@ -1593,6 +1983,8 @@ mod tests {
             credentials: KeyringCredentialStore,
             mcp_credentials: McpCredentialStore,
             active_orchestration: Mutex::new(None),
+            vision_description_cache: Arc::new(Mutex::new(BTreeMap::new())),
+            verified_reasoning_configs: Mutex::new(BTreeSet::new()),
         };
         let policy = ModelRoutingPolicy {
             priorities: lunascope_core::RoutingPriorities {
@@ -1622,7 +2014,7 @@ mod tests {
             preference.role == lunascope_core::ModelRole::Programming
                 && preference
                     .preferred_providers
-                    .contains(&ProviderType::DeepSeek)
+                    .contains(&lunascope_core::ProviderType::DeepSeek)
         }));
         assert!(
             !draft

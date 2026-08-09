@@ -5,9 +5,10 @@ use std::{
 };
 
 use lunascope_core::{
-    ConversationMessage, Course, CourseAssignment, CourseConcept, CourseSearchHit, CourseSource,
-    CourseThreadBinding, EventEnvelope, EventId, LunaProject, McpServerConfig, ModelRoutingPolicy,
-    ModelSelectionSettings, NoteRevision, ProjectionError, ProviderConfig, ReviewItem, RunId,
+    AgentSessionRecord, ConversationMessage, ConversationThread, Course, CourseAssignment,
+    CourseConcept, CourseSearchHit, CourseSource, CourseThreadBinding, EventEnvelope, EventId,
+    LunaProject, McpServerConfig, ModelRoutingPolicy, ModelSelectionSettings, NoteRevision,
+    ProjectionError, ProviderConfig, ReviewItem, RunContinuationSummary, RunId, RunLeaseRecord,
     RuntimeSnapshot, SyllabusRevision, ThreadContextSummary, UserPreferences,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -244,6 +245,80 @@ CREATE TABLE IF NOT EXISTS thread_context_summaries (
 );
 "#;
 
+const MIGRATION_8: &str = r#"
+CREATE TABLE IF NOT EXISTS conversation_threads (
+    thread_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    active_run_id TEXT,
+    context_revision INTEGER NOT NULL DEFAULT 0 CHECK(context_revision >= 0),
+    thread_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_threads_project
+ON conversation_threads(project_id, updated_at DESC);
+
+INSERT OR IGNORE INTO conversation_threads(
+    thread_id, project_id, title, active_run_id, context_revision,
+    thread_json, created_at, updated_at
+)
+SELECT thread_id, MIN(project_id), 'New conversation', MAX(run_id), 0,
+       '{}', MIN(created_at), MAX(created_at)
+FROM conversation_messages
+GROUP BY thread_id;
+
+CREATE TABLE IF NOT EXISTS run_continuation_summaries (
+    thread_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    run_id TEXT NOT NULL,
+    summary_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(thread_id, revision)
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_continuation_thread
+ON run_continuation_summaries(thread_id, revision DESC);
+"#;
+
+const MIGRATION_9: &str = r#"
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    session_id TEXT PRIMARY KEY,
+    parent_session_id TEXT,
+    project_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    worker_id TEXT,
+    kind TEXT NOT NULL,
+    state TEXT NOT NULL,
+    session_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_run
+ON agent_sessions(run_id, created_at, session_id);
+
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_parent
+ON agent_sessions(parent_session_id);
+"#;
+
+const MIGRATION_10: &str = r#"
+CREATE TABLE IF NOT EXISTS run_leases (
+    run_id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    heartbeat_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    last_progress_at TEXT NOT NULL,
+    lease_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_leases_expiry
+ON run_leases(expires_at);
+"#;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppendOutcome {
     Appended { sequence: u64 },
@@ -302,6 +377,21 @@ impl SqliteEventStore {
         connection.execute_batch(MIGRATION_7)?;
         connection.execute(
             "INSERT OR IGNORE INTO schema_migrations(version) VALUES (7)",
+            [],
+        )?;
+        connection.execute_batch(MIGRATION_8)?;
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version) VALUES (8)",
+            [],
+        )?;
+        connection.execute_batch(MIGRATION_9)?;
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version) VALUES (9)",
+            [],
+        )?;
+        connection.execute_batch(MIGRATION_10)?;
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version) VALUES (10)",
             [],
         )?;
         Ok(Self {
@@ -712,6 +802,35 @@ impl SqliteEventStore {
             |row| row.get::<_, i64>(0),
         )?;
         message.sequence = to_u64(next)?;
+        let thread = ConversationThread {
+            thread_id: message.thread_id.clone(),
+            project_id: message.project_id.clone(),
+            title: "New conversation".to_owned(),
+            active_run_id: message.run_id.clone(),
+            context_revision: 0,
+            created_at: message.created_at.clone(),
+            updated_at: message.created_at.clone(),
+        };
+        transaction.execute(
+            "INSERT INTO conversation_threads(
+                thread_id, project_id, title, active_run_id, context_revision,
+                thread_json, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(thread_id) DO UPDATE SET
+                project_id = excluded.project_id,
+                active_run_id = COALESCE(excluded.active_run_id, conversation_threads.active_run_id),
+                updated_at = excluded.updated_at",
+            params![
+                thread.thread_id.as_str(),
+                thread.project_id.as_str(),
+                thread.title,
+                thread.active_run_id.as_ref().map(RunId::as_str),
+                to_i64(thread.context_revision)?,
+                serde_json::to_string(&thread)?,
+                thread.created_at,
+                thread.updated_at,
+            ],
+        )?;
         let role = serde_json::to_value(message.role)?
             .as_str()
             .unwrap_or("system")
@@ -757,6 +876,118 @@ impl SqliteEventStore {
         Ok(messages)
     }
 
+    pub fn save_conversation_thread(
+        &self,
+        thread: &ConversationThread,
+    ) -> Result<(), StorageError> {
+        validate_scope_id(thread.thread_id.as_str())?;
+        validate_scope_id(thread.project_id.as_str())?;
+        let connection = self.lock()?;
+        connection.execute(
+            "INSERT INTO conversation_threads(
+                thread_id, project_id, title, active_run_id, context_revision,
+                thread_json, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(thread_id) DO UPDATE SET
+                project_id = excluded.project_id,
+                title = excluded.title,
+                active_run_id = excluded.active_run_id,
+                context_revision = excluded.context_revision,
+                thread_json = excluded.thread_json,
+                updated_at = excluded.updated_at",
+            params![
+                thread.thread_id.as_str(),
+                thread.project_id.as_str(),
+                thread.title,
+                thread.active_run_id.as_ref().map(RunId::as_str),
+                to_i64(thread.context_revision)?,
+                serde_json::to_string(thread)?,
+                thread.created_at,
+                thread.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn conversation_threads(
+        &self,
+        project_id: &str,
+    ) -> Result<Vec<ConversationThread>, StorageError> {
+        validate_scope_id(project_id)?;
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT thread_id, project_id, title, active_run_id, context_revision,
+                    created_at, updated_at FROM conversation_threads
+             WHERE project_id = ?1 ORDER BY updated_at DESC",
+        )?;
+        let rows = statement.query_map([project_id], |row| {
+            Ok(ConversationThread {
+                thread_id: lunascope_core::ThreadId::new(row.get::<_, String>(0)?),
+                project_id: lunascope_core::ProjectId::new(row.get::<_, String>(1)?),
+                title: row.get(2)?,
+                active_run_id: row.get::<_, Option<String>>(3)?.map(RunId::new),
+                context_revision: row.get::<_, i64>(4)? as u64,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })?;
+        let mut threads = Vec::new();
+        for row in rows {
+            threads.push(row?);
+        }
+        Ok(threads)
+    }
+
+    pub fn latest_run_continuation_summary(
+        &self,
+        thread_id: &str,
+    ) -> Result<Option<RunContinuationSummary>, StorageError> {
+        validate_scope_id(thread_id)?;
+        let connection = self.lock()?;
+        load_optional_json(
+            &connection,
+            "SELECT summary_json FROM run_continuation_summaries
+             WHERE thread_id = ?1 ORDER BY revision DESC LIMIT 1",
+            [thread_id],
+        )
+    }
+
+    pub fn save_run_continuation_summary(
+        &self,
+        summary: &RunContinuationSummary,
+    ) -> Result<(), StorageError> {
+        validate_scope_id(summary.thread_id.as_str())?;
+        validate_scope_id(summary.run_id.as_str())?;
+        let connection = self.lock()?;
+        connection.execute(
+            "INSERT INTO run_continuation_summaries(
+                thread_id, revision, run_id, summary_json, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(thread_id, revision) DO UPDATE SET
+                run_id = excluded.run_id,
+                summary_json = excluded.summary_json,
+                created_at = excluded.created_at",
+            params![
+                summary.thread_id.as_str(),
+                to_i64(summary.revision)?,
+                summary.run_id.as_str(),
+                serde_json::to_string(summary)?,
+                summary.created_at,
+            ],
+        )?;
+        connection.execute(
+            "UPDATE conversation_threads
+             SET context_revision = ?2, updated_at = ?3
+             WHERE thread_id = ?1",
+            params![
+                summary.thread_id.as_str(),
+                to_i64(summary.revision)?,
+                summary.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
     pub fn thread_context_summary(
         &self,
         thread_id: &str,
@@ -791,6 +1022,16 @@ impl SqliteEventStore {
                 summary.updated_at,
             ],
         )?;
+        connection.execute(
+            "UPDATE conversation_threads
+             SET context_revision = ?2, updated_at = ?3
+             WHERE thread_id = ?1",
+            params![
+                summary.thread_id.as_str(),
+                to_i64(summary.revision)?,
+                summary.updated_at,
+            ],
+        )?;
         Ok(())
     }
 
@@ -800,6 +1041,14 @@ impl SqliteEventStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute(
             "DELETE FROM thread_context_summaries WHERE thread_id = ?1",
+            [thread_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM run_continuation_summaries WHERE thread_id = ?1",
+            [thread_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM conversation_threads WHERE thread_id = ?1",
             [thread_id],
         )?;
         transaction.execute(
@@ -827,8 +1076,17 @@ impl SqliteEventStore {
         let mut connection = self.lock()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         transaction.execute(
+            "DELETE FROM run_continuation_summaries
+             WHERE thread_id IN (SELECT thread_id FROM conversation_threads WHERE project_id = ?1)",
+            [project_id],
+        )?;
+        transaction.execute(
             "DELETE FROM thread_context_summaries
-             WHERE thread_id IN (SELECT DISTINCT thread_id FROM conversation_messages WHERE project_id = ?1)",
+             WHERE thread_id IN (SELECT thread_id FROM conversation_threads WHERE project_id = ?1)",
+            [project_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM conversation_threads WHERE project_id = ?1",
             [project_id],
         )?;
         transaction.execute(
@@ -1186,6 +1444,132 @@ impl SqliteEventStore {
         )
     }
 
+    pub fn save_agent_session(&self, session: &AgentSessionRecord) -> Result<(), StorageError> {
+        validate_scope_id(session.session_id.as_str())?;
+        validate_scope_id(session.project_id.as_str())?;
+        validate_scope_id(session.thread_id.as_str())?;
+        validate_scope_id(session.run_id.as_str())?;
+        if session.display_name.trim().is_empty()
+            || session.created_at.trim().is_empty()
+            || session.updated_at.trim().is_empty()
+        {
+            return Err(StorageError::InvalidAgentSession);
+        }
+        let connection = self.lock()?;
+        connection.execute(
+            "INSERT INTO agent_sessions(
+                session_id, parent_session_id, project_id, thread_id, run_id,
+                worker_id, kind, state, session_json, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(session_id) DO UPDATE SET
+                parent_session_id = excluded.parent_session_id,
+                project_id = excluded.project_id,
+                thread_id = excluded.thread_id,
+                run_id = excluded.run_id,
+                worker_id = excluded.worker_id,
+                kind = excluded.kind,
+                state = excluded.state,
+                session_json = excluded.session_json,
+                updated_at = excluded.updated_at",
+            params![
+                session.session_id.as_str(),
+                session.parent_session_id.as_ref().map(|id| id.as_str()),
+                session.project_id.as_str(),
+                session.thread_id.as_str(),
+                session.run_id.as_str(),
+                session.worker_id.as_ref().map(|id| id.as_str()),
+                serde_json::to_value(session.kind)?
+                    .as_str()
+                    .expect("agent session kind serializes as a string"),
+                serde_json::to_value(session.state)?
+                    .as_str()
+                    .expect("agent session state serializes as a string"),
+                serde_json::to_string(session)?,
+                session.created_at,
+                session.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn agent_sessions_for_run(
+        &self,
+        run_id: &RunId,
+    ) -> Result<Vec<AgentSessionRecord>, StorageError> {
+        let connection = self.lock()?;
+        load_json_rows(
+            &connection,
+            "SELECT session_json FROM agent_sessions
+             WHERE run_id = ?1 ORDER BY created_at, session_id",
+            [run_id.as_str()],
+        )
+    }
+
+    pub fn save_run_lease(&self, lease: &RunLeaseRecord) -> Result<(), StorageError> {
+        validate_scope_id(lease.run_id.as_str())?;
+        if lease.owner_id.trim().is_empty()
+            || lease.phase.trim().is_empty()
+            || lease.heartbeat_at.trim().is_empty()
+            || lease.expires_at.trim().is_empty()
+            || lease.last_progress_at.trim().is_empty()
+        {
+            return Err(StorageError::InvalidRunLease);
+        }
+        let connection = self.lock()?;
+        connection.execute(
+            "INSERT INTO run_leases(
+                run_id, owner_id, phase, heartbeat_at, expires_at,
+                last_progress_at, lease_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(run_id) DO UPDATE SET
+                owner_id = excluded.owner_id,
+                phase = excluded.phase,
+                heartbeat_at = excluded.heartbeat_at,
+                expires_at = excluded.expires_at,
+                last_progress_at = excluded.last_progress_at,
+                lease_json = excluded.lease_json",
+            params![
+                lease.run_id.as_str(),
+                lease.owner_id,
+                lease.phase,
+                lease.heartbeat_at,
+                lease.expires_at,
+                lease.last_progress_at,
+                serde_json::to_string(lease)?,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn run_lease(&self, run_id: &RunId) -> Result<Option<RunLeaseRecord>, StorageError> {
+        let connection = self.lock()?;
+        load_optional_json(
+            &connection,
+            "SELECT lease_json FROM run_leases WHERE run_id = ?1",
+            [run_id.as_str()],
+        )
+    }
+
+    pub fn expired_run_leases(&self, now: &str) -> Result<Vec<RunLeaseRecord>, StorageError> {
+        if now.trim().is_empty() {
+            return Err(StorageError::InvalidRunLease);
+        }
+        let connection = self.lock()?;
+        load_json_rows(
+            &connection,
+            "SELECT lease_json FROM run_leases WHERE expires_at <= ?1 ORDER BY expires_at, run_id",
+            [now],
+        )
+    }
+
+    pub fn release_run_lease(&self, run_id: &RunId) -> Result<bool, StorageError> {
+        let connection = self.lock()?;
+        Ok(connection.execute(
+            "DELETE FROM run_leases WHERE run_id = ?1",
+            [run_id.as_str()],
+        )? > 0)
+    }
+
     fn lock(&self) -> Result<MutexGuard<'_, Connection>, StorageError> {
         self.connection
             .lock()
@@ -1380,4 +1764,8 @@ pub enum StorageError {
     InvalidConfigId,
     #[error("conversation message content is required")]
     EmptyConversationMessage,
+    #[error("agent session identity, display name, and timestamps are required")]
+    InvalidAgentSession,
+    #[error("run lease owner, phase, and timestamps are required")]
+    InvalidRunLease,
 }

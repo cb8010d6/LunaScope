@@ -58,3 +58,4 @@ string_id!(WorkerId);
 string_id!(CorrelationId);
 string_id!(ArtifactId);
 string_id!(CheckpointId);
+string_id!(AgentSessionId);

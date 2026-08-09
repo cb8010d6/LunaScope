@@ -34,7 +34,7 @@ pub(crate) fn build_worker_instructions(input: WorkerPromptInput<'_>) -> String 
         "{}\n\n# Runtime capability snapshot\n{}\n\n# Worker execution contract\n\
          You are an executing LunaScope Worker operating inside an isolated, write-through copy of the user's selected workspace. \
          Follow the Orchestrator assignment and the complete original objective. For work with more than one meaningful step, call update_plan before the first mutation and keep the checklist synchronized with evidence. \
-         Call report_progress only at phase boundaries or after important discoveries; name the observation, decision, and next observable action. \
+         Every response that proposes an executable tool action MUST first call report_progress in that same response, unless the Provider has already emitted a public reasoning summary for that response. Use report_progress again after an important discovery or when tool evidence changes the approach; name the concrete observation, decision, and next observable action. \
          Tool paths and cwd values are workspace-relative. Use tools against the real workspace, inspect the resulting state, repair failed checks, and never claim an operation you did not observe. \
          When complete, return one JSON object with no Markdown fence matching this schema: {}\n\n{}\n\n{}\n\n{}",
         sections.join("\n\n"),
@@ -84,6 +84,7 @@ mod tests {
     fn spec(objective: &str, role: &str) -> WorkerSpec {
         WorkerSpec {
             worker_id: WorkerId::new("worker-prompt"),
+            display_name: format!("Test {role} assignment"),
             role: role.into(),
             tags: Vec::new(),
             objective: objective.into(),
@@ -100,11 +101,15 @@ mod tests {
                 schema: serde_json::json!({"type":"object"}),
             },
             completion_criteria: vec!["done".into()],
+            owned_acceptance_criteria: Vec::new(),
+            parallel_group: None,
             model: ModelSelection {
                 provider: "provider".into(),
                 model: "model".into(),
                 reason: "test".into(),
                 fallback: false,
+                reasoning_effort: None,
+                custom_reasoning_effort: None,
             },
             skills: Vec::new(),
             tools: vec!["filesystem.read".into()],
