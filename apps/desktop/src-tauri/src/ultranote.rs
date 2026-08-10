@@ -787,7 +787,6 @@ mod export_tests {
             mcp_credentials: McpCredentialStore,
             active_orchestration: Mutex::new(None),
             vision_description_cache: Arc::new(Mutex::new(BTreeMap::new())),
-            verified_reasoning_configs: Mutex::new(Default::default()),
         };
         let config = tauri::async_runtime::block_on(initialize_project_course(
             &state,

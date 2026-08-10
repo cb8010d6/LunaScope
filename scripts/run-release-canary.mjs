@@ -1,7 +1,31 @@
 import { spawnSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { redactSensitiveText } from "./redact-sensitive.mjs";
+
+const attachmentFixtureRoot = process.env.LUNASCOPE_ATTACHMENT_FIXTURE_ROOT ?? "";
+const requiredAttachmentFixtures = [
+  "lecture.pdf",
+  "lecture.docx",
+  "lecture.xlsx",
+  "lecture.pptx",
+];
+if (!attachmentFixtureRoot) {
+  throw new Error(
+    "Release canary fixtures are unavailable. Set LUNASCOPE_ATTACHMENT_FIXTURE_ROOT before paid cases run.",
+  );
+}
+for (const name of requiredAttachmentFixtures) {
+  try {
+    await access(resolve(attachmentFixtureRoot, name));
+  } catch {
+    throw new Error(
+      "Release canary fixture is missing: " +
+        name +
+        ". Generate and validate the deterministic fixture set first.",
+    );
+  }
+}
 
 const secret = process.env.RELEASE_CANARY_DEEPSEEK_API_KEY ?? "";
 if (!secret) {

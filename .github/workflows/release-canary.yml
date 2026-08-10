@@ -31,6 +31,18 @@ jobs:
           rustup toolchain install 1.95.0 --profile minimal
           rustup default 1.95.0
 
+      - name: Generate deterministic release canary fixtures
+        shell: pwsh
+        run: pwsh -NoProfile -File ./scripts/create-release-canary-fixtures.ps1 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'lunascope-canary-fixtures')
+
+      - name: Validate release canary fixtures
+        shell: pwsh
+        run: |
+          $fixtureRoot = Join-Path $env:RUNNER_TEMP 'lunascope-canary-fixtures'
+          pwsh -NoProfile -File ./scripts/create-release-canary-fixtures.ps1 -OutputDirectory $fixtureRoot -Validate
+          $env:LUNASCOPE_ATTACHMENT_FIXTURE_ROOT = $fixtureRoot
+          cargo test -p lunascope-desktop --lib common_document_fixture_canary -- --ignored --nocapture
+
       - name: Require secret-enabled workflow
         shell: pwsh
         run: |
@@ -39,6 +51,8 @@ jobs:
           }
 
       - name: Run representative live Provider canaries
+        env:
+          LUNASCOPE_ATTACHMENT_FIXTURE_ROOT: ${{ runner.temp }}\lunascope-canary-fixtures
         run: npm run evals:canary
 
       - uses: actions/upload-artifact@v4

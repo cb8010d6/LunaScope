@@ -289,7 +289,7 @@ where
                     message: format!("unsupported data-root config version {}", config.version),
                 });
             }
-            prepare_root(&config.data_root, &probe)
+            open_existing_root(&config.data_root, &probe)
         })();
         match saved_root {
             Ok(root) => return Ok(DataPaths::new(root, DataRootSource::Saved)),
@@ -308,7 +308,7 @@ where
     }
 
     if legacy_root.is_dir() {
-        match prepare_root(legacy_root, &probe) {
+        match open_existing_root(legacy_root, &probe) {
             Ok(root) => {
                 persist_config(config_dir, &root)?;
                 return Ok(DataPaths::new(root, DataRootSource::Legacy));
@@ -340,6 +340,23 @@ where
         path: candidate.clone(),
         source,
     })?;
+    probe(&candidate).map_err(|source| DataPathError::NotWritable {
+        path: candidate.clone(),
+        source,
+    })?;
+    candidate
+        .canonicalize()
+        .map_err(|_| DataPathError::Unavailable { path: candidate })
+}
+
+fn open_existing_root<F>(candidate: &Path, probe: &F) -> Result<PathBuf, DataPathError>
+where
+    F: Fn(&Path) -> io::Result<()>,
+{
+    let candidate = normalize_absolute(candidate)?;
+    if !candidate.exists() || !candidate.is_dir() {
+        return Err(DataPathError::Unavailable { path: candidate });
+    }
     probe(&candidate).map_err(|source| DataPathError::NotWritable {
         path: candidate.clone(),
         source,
@@ -533,6 +550,38 @@ mod tests {
     }
 
     #[test]
+    fn missing_saved_root_enters_recovery_without_recreating_the_directory() {
+        let (_temp, config, default, legacy) = roots();
+        let missing = config.parent().unwrap().join("moved-data-root");
+        fs::create_dir_all(&config).unwrap();
+        let config_bytes = serde_json::to_vec_pretty(&DataRootConfig {
+            version: CONFIG_VERSION,
+            data_root: missing.clone(),
+        })
+        .unwrap();
+        fs::write(config.join(CONFIG_FILE_NAME), &config_bytes).unwrap();
+
+        assert!(!missing.exists());
+        let paths = resolve(&config, &default, &legacy).unwrap();
+
+        assert_eq!(paths.source(), DataRootSource::RecoveryFallback);
+        assert_eq!(paths.root(), default.canonicalize().unwrap());
+        assert!(
+            !missing.exists(),
+            "a missing saved root must not be recreated"
+        );
+        assert_eq!(
+            fs::read(config.join(CONFIG_FILE_NAME)).unwrap(),
+            config_bytes,
+            "recovery must preserve the saved configuration"
+        );
+        assert!(matches!(
+            paths.require_operational(),
+            Err(DataPathError::RecoveryMode)
+        ));
+    }
+
+    #[test]
     fn unwritable_legacy_directory_starts_in_recovery_without_copying() {
         let (_temp, config, default, legacy) = roots();
         fs::create_dir_all(legacy.join("state")).unwrap();
@@ -580,6 +629,7 @@ mod tests {
     fn interrupted_config_replace_restores_the_saved_root_from_backup() {
         let (_temp, config, default, legacy) = roots();
         let saved_root = config.parent().unwrap().join("saved-root");
+        fs::create_dir_all(&saved_root).unwrap();
         fs::create_dir_all(&config).unwrap();
         fs::write(
             config.join(CONFIG_BACKUP_FILE_NAME),
@@ -603,6 +653,7 @@ mod tests {
     fn saved_custom_root_has_highest_priority() {
         let (_temp, config, default, legacy) = roots();
         let custom = config.parent().unwrap().join("custom");
+        fs::create_dir_all(&custom).unwrap();
         fs::create_dir_all(&config).unwrap();
         fs::create_dir_all(&legacy).unwrap();
         fs::write(

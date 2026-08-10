@@ -13067,7 +13067,6 @@ mod tests {
             mcp_credentials: McpCredentialStore,
             active_orchestration: std::sync::Mutex::new(None),
             vision_description_cache: Arc::new(Mutex::new(BTreeMap::new())),
-            verified_reasoning_configs: std::sync::Mutex::new(Default::default()),
         }
     }
 

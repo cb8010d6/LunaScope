@@ -87,6 +87,9 @@ jobs:
       - name: Frontend production build
         run: npm run build
 
+      - name: Tauri desktop build
+        run: npm run tauri -- build --no-bundle --ci
+
       - name: Production dependency audit
         run: npm audit --omit=dev
 
@@ -101,7 +104,8 @@ jobs:
           Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
           All required Rust, TypeScript, contract, deterministic asset,
-          release-gate, build, and production audit steps completed successfully.
+          release-gate, frontend, Tauri desktop build, and production audit
+          steps completed successfully.
           "@ | Set-Content -LiteralPath TEST_SUMMARY.md -Encoding utf8
 
       - uses: actions/upload-artifact@v4

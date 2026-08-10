@@ -10,10 +10,11 @@ use lunascope_core::{
     CorrelationId, CredentialReference, EventData, EventEnvelope, EventId, EventSource,
     GithubImportPreview, ImportComparison, ImportInstallRequest, InstalledImportVersion,
     LoadedSkill, McpConfigValue, McpInvocationResult, McpServerConfig, McpServerStatus,
-    McpTransportConfig, ModelRoutingPolicy, ModelSelectionSettings, NaturalLanguageRoutingDraft,
-    PermissionContext, PermissionKind, PermissionRequest, PolicyDecision, ProjectId,
-    ProviderConfig, ReasoningEffort, RiskLevel, RunId, RuntimeDelta, RuntimeSnapshot,
-    SkillSourceKind, SkillSummary, ThreadId, ToolManifest, ToolRoutingDecision, ToolRoutingRequest,
+    McpTransportConfig, ModelCompatibilityVerification, ModelRoutingPolicy, ModelSelectionSettings,
+    NaturalLanguageRoutingDraft, PermissionContext, PermissionKind, PermissionRequest,
+    PolicyDecision, ProjectId, ProviderConfig, ReasoningEffort, RiskLevel, RunId, RuntimeDelta,
+    RuntimeSnapshot, SkillSourceKind, SkillSummary, ThreadId, ToolManifest, ToolRoutingDecision,
+    ToolRoutingRequest,
 };
 use lunascope_extensions::{
     GithubImportManager, McpCredentialStore, McpSecretValue, NativeMcpClient, SkillCatalog,
@@ -51,7 +52,6 @@ pub(crate) struct AppState {
     mcp_credentials: McpCredentialStore,
     pub(crate) active_orchestration: Mutex<Option<orchestration::ActiveOrchestrationInvocation>>,
     pub(crate) vision_description_cache: Arc<Mutex<BTreeMap<String, String>>>,
-    verified_reasoning_configs: Mutex<BTreeSet<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -207,6 +207,18 @@ fn list_provider_configs(state: State<'_, AppState>) -> Result<Vec<ProviderConfi
     state.store.provider_configs().map_err(display_error)
 }
 
+fn provider_compatibility_identity(config: &ProviderConfig) -> Result<String, String> {
+    serde_json::to_string(&(
+        config.provider_type,
+        config.protocol,
+        config.base_url.trim(),
+        config.credential_reference_id.trim(),
+        config.default_model_id.trim(),
+        &config.custom_headers,
+    ))
+    .map_err(display_error)
+}
+
 #[tauri::command]
 fn save_provider_config(
     state: State<'_, AppState>,
@@ -214,6 +226,27 @@ fn save_provider_config(
     credential: Option<String>,
 ) -> Result<(), String> {
     validate_provider_config(&config).map_err(display_error)?;
+    let previous = state
+        .store
+        .provider_configs()
+        .map_err(display_error)?
+        .into_iter()
+        .find(|saved| saved.id == config.id);
+    let credential_supplied = credential.is_some();
+    let identity_changed = previous
+        .as_ref()
+        .map(|saved| {
+            provider_compatibility_identity(saved)
+                .and_then(|old| provider_compatibility_identity(&config).map(|new| old != new))
+        })
+        .transpose()?
+        .unwrap_or(false);
+    if credential_supplied || identity_changed {
+        state
+            .store
+            .clear_model_compatibility_verifications_for_provider_config(&config.id)
+            .map_err(display_error)?;
+    }
     let credential_rollback = if let Some(credential) = credential {
         let reference = CredentialReference {
             id: config.credential_reference_id.clone(),
@@ -250,11 +283,6 @@ fn save_provider_config(
         }
         return Err(display_error(error));
     }
-    state
-        .verified_reasoning_configs
-        .lock()
-        .map_err(|_| "reasoning test registry is unavailable".to_owned())?
-        .clear();
     Ok(())
 }
 
@@ -264,14 +292,13 @@ fn delete_provider_credential(
     reference: CredentialReference,
 ) -> Result<(), String> {
     state
+        .store
+        .clear_model_compatibility_verifications_for_credential_reference(&reference.id)
+        .map_err(display_error)?;
+    state
         .credentials
         .delete(&reference)
         .map_err(display_error)?;
-    state
-        .verified_reasoning_configs
-        .lock()
-        .map_err(|_| "reasoning test registry is unavailable".to_owned())?
-        .clear();
     Ok(())
 }
 
@@ -324,20 +351,40 @@ async fn test_provider_connection(
     })
 }
 
-fn reasoning_test_key(
-    provider_config_id: &str,
+fn reasoning_test_record(
+    provider: &ProviderConfig,
     model: &str,
     custom_reasoning_effort: Option<&str>,
-) -> Result<String, String> {
-    let provider_config_id = provider_config_id.trim();
+) -> Result<ModelCompatibilityVerification, String> {
     let model = model.trim();
-    if provider_config_id.is_empty() || model.is_empty() {
+    if provider.id.trim().is_empty() || model.is_empty() {
         return Err("provider configuration ID and model ID are required".into());
     }
     let effort = normalize_custom_reasoning_effort(custom_reasoning_effort)
         .map_err(display_error)?
         .unwrap_or_else(|| "<auto>".into());
-    Ok(format!("{provider_config_id}\0{model}\0{effort}"))
+    Ok(ModelCompatibilityVerification {
+        provider_config_id: provider.id.trim().into(),
+        provider_type: provider.provider_type,
+        protocol: provider.protocol,
+        base_url: provider.base_url.trim().into(),
+        credential_reference_id: provider.credential_reference_id.trim().into(),
+        model_id: model.into(),
+        reasoning_effort: effort,
+    })
+}
+
+fn reasoning_test_key(
+    provider: &ProviderConfig,
+    model: &str,
+    custom_reasoning_effort: Option<&str>,
+) -> Result<String, String> {
+    serde_json::to_string(&reasoning_test_record(
+        provider,
+        model,
+        custom_reasoning_effort,
+    )?)
+    .map_err(display_error)
 }
 
 fn assignment_custom_reasoning_effort(
@@ -366,6 +413,7 @@ fn assignment_custom_reasoning_effort(
 
 fn reasoning_configurations(
     settings: &ModelSelectionSettings,
+    providers: &[ProviderConfig],
 ) -> Result<BTreeMap<String, String>, String> {
     let mut configurations = BTreeMap::new();
     for assignment in std::iter::once(&settings.orchestration)
@@ -373,11 +421,16 @@ fn reasoning_configurations(
         .chain(settings.worker_pool.iter())
     {
         let effort = assignment_custom_reasoning_effort(settings, assignment)?;
-        let key = reasoning_test_key(
-            &assignment.provider_config_id,
-            &assignment.model_id,
-            effort.as_deref(),
-        )?;
+        let provider = providers
+            .iter()
+            .find(|provider| provider.id == assignment.provider_config_id)
+            .ok_or_else(|| {
+                format!(
+                    "provider configuration not found: {}",
+                    assignment.provider_config_id
+                )
+            })?;
+        let key = reasoning_test_key(provider, &assignment.model_id, effort.as_deref())?;
         configurations.entry(key).or_insert_with(|| {
             format!(
                 "{} / {} / {}",
@@ -392,9 +445,10 @@ fn reasoning_configurations(
 
 fn require_tested_reasoning_configurations(
     proposed: &ModelSelectionSettings,
+    providers: &[ProviderConfig],
     verified: &BTreeSet<String>,
 ) -> Result<(), String> {
-    let proposed = reasoning_configurations(proposed)?;
+    let proposed = reasoning_configurations(proposed, providers)?;
     let missing = proposed
         .iter()
         .filter(|(key, _)| !verified.contains(*key))
@@ -441,7 +495,7 @@ async fn test_model_reasoning_config_with_state(
         .ok_or_else(|| format!("enabled provider configuration not found: {provider_config_id}"))?;
     let custom = normalize_custom_reasoning_effort(custom_reasoning_effort.as_deref())
         .map_err(display_error)?;
-    let test_key = reasoning_test_key(&provider_config_id, &model, custom.as_deref())?;
+    let verification = reasoning_test_record(&config, &model, custom.as_deref())?;
     let client =
         NativeProviderClient::from_keyring(&config, &state.credentials).map_err(display_error)?;
     let fallback_thinking =
@@ -480,10 +534,9 @@ async fn test_model_reasoning_config_with_state(
         .await
         .map_err(display_error)?;
     state
-        .verified_reasoning_configs
-        .lock()
-        .map_err(|_| "reasoning test registry is unavailable".to_owned())?
-        .insert(test_key);
+        .store
+        .save_model_compatibility_verification(&verification)
+        .map_err(display_error)?;
     Ok(ProviderConnectionResult {
         response_id: summary.response_id,
         text: summary.text,
@@ -764,11 +817,10 @@ fn save_model_selection_settings_with_state(
     let providers = state.store.provider_configs().map_err(display_error)?;
     validate_model_selection_settings(&settings, &providers).map_err(display_error)?;
     let verified = state
-        .verified_reasoning_configs
-        .lock()
-        .map_err(|_| "reasoning test registry is unavailable".to_owned())?;
-    require_tested_reasoning_configurations(&settings, &verified)?;
-    drop(verified);
+        .store
+        .model_compatibility_verification_keys()
+        .map_err(display_error)?;
+    require_tested_reasoning_configurations(&settings, &providers, &verified)?;
     state
         .store
         .save_model_selection_settings(&scope_id, &settings)
@@ -802,6 +854,10 @@ fn environment_preflight_for(
         .iter()
         .filter(|provider| provider.enabled)
         .collect::<Vec<_>>();
+    let verified_reasoning_configs = state
+        .store
+        .model_compatibility_verification_keys()
+        .map_err(display_error)?;
     let settings = state
         .store
         .model_selection_settings("global")
@@ -815,16 +871,16 @@ fn environment_preflight_for(
     let orchestration_model_verified = if orchestration_model_configured {
         let settings = settings.as_ref().expect("configured settings are present");
         let effort = assignment_custom_reasoning_effort(settings, &settings.orchestration)?;
+        let provider = enabled_providers
+            .iter()
+            .find(|provider| provider.id == settings.orchestration.provider_config_id)
+            .expect("configured orchestration provider is enabled");
         let key = reasoning_test_key(
-            &settings.orchestration.provider_config_id,
+            provider,
             &settings.orchestration.model_id,
             effort.as_deref(),
         )?;
-        state
-            .verified_reasoning_configs
-            .lock()
-            .map_err(|_| "reasoning test registry is unavailable".to_owned())?
-            .contains(&key)
+        verified_reasoning_configs.contains(&key)
     } else {
         false
     };
@@ -1724,7 +1780,6 @@ pub fn run() {
                 mcp_credentials: McpCredentialStore,
                 active_orchestration: Mutex::new(None),
                 vision_description_cache: Arc::new(Mutex::new(BTreeMap::new())),
-                verified_reasoning_configs: Mutex::new(BTreeSet::new()),
             });
             companion::restore_window_visibility(app.handle());
             Ok(())
@@ -1908,6 +1963,24 @@ mod tests {
             .into_owned()
     }
 
+    fn reasoning_provider(id: &str) -> ProviderConfig {
+        ProviderConfig {
+            id: id.into(),
+            provider_type: lunascope_core::ProviderType::DeepSeek,
+            protocol: lunascope_core::ProviderProtocol::OpenAiChatCompletions,
+            display_name: "DeepSeek fixture".into(),
+            base_url: "https://api.deepseek.com".into(),
+            credential_reference_id: format!("{id}-credential"),
+            default_model_id: "deepseek-v4-flash".into(),
+            custom_headers: Vec::new(),
+            context_window_tokens: None,
+            supports_tools: true,
+            supports_vision: false,
+            supports_structured_output: true,
+            enabled: true,
+        }
+    }
+
     fn reasoning_settings(effort: Option<&str>) -> ModelSelectionSettings {
         ModelSelectionSettings {
             orchestration: lunascope_core::ModelAssignment {
@@ -1931,27 +2004,100 @@ mod tests {
     #[test]
     fn every_saved_reasoning_configuration_requires_the_exact_successful_test() {
         let high = reasoning_settings(Some("high"));
-        let missing = require_tested_reasoning_configurations(&high, &BTreeSet::new())
+        let provider = reasoning_provider("deepseek-primary");
+        let providers = vec![provider.clone()];
+        let missing = require_tested_reasoning_configurations(&high, &providers, &BTreeSet::new())
             .expect_err("untested new configuration");
         assert!(missing.starts_with("MODEL_REASONING_TEST_REQUIRED:"));
 
-        let key = reasoning_test_key("deepseek-primary", "deepseek-v4-flash", Some("high"))
-            .expect("test key");
-        require_tested_reasoning_configurations(&high, &[key].into_iter().collect())
+        let key =
+            reasoning_test_key(&provider, "deepseek-v4-flash", Some("high")).expect("test key");
+        require_tested_reasoning_configurations(&high, &providers, &[key].into_iter().collect())
             .expect("exact tested configuration");
 
         let max = reasoning_settings(Some("max"));
-        assert!(require_tested_reasoning_configurations(&max, &BTreeSet::new()).is_err());
+        assert!(
+            require_tested_reasoning_configurations(&max, &providers, &BTreeSet::new()).is_err()
+        );
     }
 
     #[test]
     fn custom_effort_is_bounded_and_blank_means_provider_default() {
-        assert_eq!(
-            reasoning_test_key("provider", "model", None).expect("auto"),
-            "provider\0model\0<auto>"
+        let provider = reasoning_provider("provider");
+        let auto_key = reasoning_test_key(&provider, "model", None).expect("auto");
+        let auto_record: serde_json::Value = serde_json::from_str(&auto_key).expect("record");
+        assert_eq!(auto_record["provider_config_id"], "provider");
+        assert_eq!(auto_record["reasoning_effort"], "<auto>");
+        assert!(reasoning_test_key(&provider, "model", Some("xhigh")).is_ok());
+        assert!(reasoning_test_key(&provider, "model", Some("bad value")).is_err());
+    }
+
+    #[test]
+    fn model_compatibility_verification_survives_restart_and_invalidates_changed_model() {
+        let temporary = tempfile::tempdir().expect("temporary verification store");
+        let database = temporary.path().join("state.db");
+        let provider = reasoning_provider("deepseek-primary");
+        let settings = reasoning_settings(Some("high"));
+        let verification =
+            reasoning_test_record(&provider, "deepseek-v4-flash", Some("high")).expect("record");
+        {
+            let store = Arc::new(SqliteEventStore::open(&database).expect("store"));
+            store
+                .save_provider_config(&provider)
+                .expect("provider config");
+            store
+                .save_model_selection_settings("global", &settings)
+                .expect("model settings");
+            store
+                .save_model_compatibility_verification(&verification)
+                .expect("verification");
+            let state = AppState {
+                store,
+                credentials: KeyringCredentialStore,
+                mcp_credentials: McpCredentialStore,
+                active_orchestration: Mutex::new(None),
+                vision_description_cache: Arc::new(Mutex::new(BTreeMap::new())),
+            };
+            let report = environment_preflight_for(
+                &state,
+                Path::new(env!("CARGO_MANIFEST_DIR")),
+                BTreeSet::new(),
+            )
+            .expect("preflight");
+            assert!(
+                report.ready,
+                "first launch should be ready: {:?}",
+                report.issues
+            );
+        }
+
+        let store = Arc::new(SqliteEventStore::open(&database).expect("reopen store"));
+        let state = AppState {
+            store: Arc::clone(&store),
+            credentials: KeyringCredentialStore,
+            mcp_credentials: McpCredentialStore,
+            active_orchestration: Mutex::new(None),
+            vision_description_cache: Arc::new(Mutex::new(BTreeMap::new())),
+        };
+        let report = environment_preflight_for(
+            &state,
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            BTreeSet::new(),
+        )
+        .expect("preflight after restart");
+        assert!(
+            report.ready,
+            "restart should reuse verification: {:?}",
+            report.issues
         );
-        assert!(reasoning_test_key("provider", "model", Some("xhigh")).is_ok());
-        assert!(reasoning_test_key("provider", "model", Some("bad value")).is_err());
+
+        let mut changed = settings;
+        changed.orchestration.custom_reasoning_effort = Some("max".into());
+        let providers = store.provider_configs().expect("providers");
+        let verified = store
+            .model_compatibility_verification_keys()
+            .expect("verifications");
+        assert!(require_tested_reasoning_configurations(&changed, &providers, &verified).is_err());
     }
 
     #[test]
@@ -2159,7 +2305,6 @@ mod tests {
             mcp_credentials: McpCredentialStore,
             active_orchestration: Mutex::new(None),
             vision_description_cache: Arc::new(Mutex::new(BTreeMap::new())),
-            verified_reasoning_configs: Mutex::new(BTreeSet::new()),
         };
         let settings = reasoning_settings(Some("high"));
 
@@ -2220,7 +2365,6 @@ mod tests {
             mcp_credentials: McpCredentialStore,
             active_orchestration: Mutex::new(None),
             vision_description_cache: Arc::new(Mutex::new(BTreeMap::new())),
-            verified_reasoning_configs: Mutex::new(BTreeSet::new()),
         };
         let policy = ModelRoutingPolicy {
             priorities: lunascope_core::RoutingPriorities {

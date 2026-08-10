@@ -2,9 +2,10 @@ use std::path::Path;
 
 use lunascope_core::{
     CorrelationId, EventData, EventEnvelope, EventId, EventSource, McpConfigValue, McpHeader,
-    McpServerConfig, McpTransportConfig, ModelAssignment, ModelCapability, ModelRole,
-    ModelRoutingPolicy, ModelSelectionSettings, ProjectId, ProviderConfig, ProviderProtocol,
-    ProviderType, ReasoningEffort, RoutingPriorities, RunId, RunState, ThreadId,
+    McpServerConfig, McpTransportConfig, ModelAssignment, ModelCapability,
+    ModelCompatibilityVerification, ModelRole, ModelRoutingPolicy, ModelSelectionSettings,
+    ProjectId, ProviderConfig, ProviderProtocol, ProviderType, ReasoningEffort, RoutingPriorities,
+    RunId, RunState, ThreadId,
 };
 use lunascope_storage::{AppendOutcome, SqliteEventStore, StorageError};
 
@@ -360,4 +361,57 @@ fn mcp_server_configs_survive_restart_and_can_be_deleted() {
             .expect("delete missing MCP config")
     );
     assert!(reopened.mcp_server_configs().unwrap().is_empty());
+}
+
+#[test]
+fn model_compatibility_verification_survives_restart_and_invalidates_by_identity() {
+    let directory = tempfile::tempdir().expect("temp directory");
+    let path = directory.path().join("model-verification.db");
+    let verification = ModelCompatibilityVerification {
+        provider_config_id: "deepseek-primary".into(),
+        provider_type: ProviderType::DeepSeek,
+        protocol: ProviderProtocol::OpenAiChatCompletions,
+        base_url: "https://api.deepseek.com".into(),
+        credential_reference_id: "deepseek-primary".into(),
+        model_id: "deepseek-v4-flash".into(),
+        reasoning_effort: "high".into(),
+    };
+
+    {
+        let store = SqliteEventStore::open(&path).expect("store");
+        store
+            .save_model_compatibility_verification(&verification)
+            .expect("save verification");
+    }
+
+    let reopened = SqliteEventStore::open(&path).expect("reopen");
+    let keys = reopened
+        .model_compatibility_verification_keys()
+        .expect("load verification");
+    let key = serde_json::to_string(&verification).expect("verification key");
+    assert!(keys.contains(&key));
+    assert!(!key.contains("secret"));
+
+    reopened
+        .clear_model_compatibility_verifications_for_provider_config("deepseek-primary")
+        .expect("invalidate provider verifications");
+    assert!(
+        reopened
+            .model_compatibility_verification_keys()
+            .expect("reload after provider invalidation")
+            .is_empty()
+    );
+
+    reopened
+        .save_model_compatibility_verification(&verification)
+        .expect("restore verification");
+    reopened
+        .clear_model_compatibility_verifications_for_credential_reference("deepseek-primary")
+        .expect("invalidate credential verifications");
+    assert!(
+        reopened
+            .model_compatibility_verification_keys()
+            .expect("reload after credential invalidation")
+            .is_empty()
+    );
 }

@@ -74,6 +74,21 @@ pub struct ProviderConfig {
     pub enabled: bool,
 }
 
+/// Non-secret identity of a successful model/reasoning compatibility check.
+///
+/// The credential value is deliberately absent. The credential reference ID is
+/// retained so replacing the configured credential invalidates the record.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelCompatibilityVerification {
+    pub provider_config_id: String,
+    pub provider_type: ProviderType,
+    pub protocol: ProviderProtocol,
+    pub base_url: String,
+    pub credential_reference_id: String,
+    pub model_id: String,
+    pub reasoning_effort: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(rename_all = "snake_case")]

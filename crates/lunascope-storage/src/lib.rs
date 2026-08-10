@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     path::Path,
     sync::{Mutex, MutexGuard},
     time::Duration,
@@ -7,9 +8,10 @@ use std::{
 use lunascope_core::{
     AgentSessionRecord, ConversationMessage, ConversationThread, Course, CourseAssignment,
     CourseConcept, CourseSearchHit, CourseSource, CourseThreadBinding, EventEnvelope, EventId,
-    LunaProject, McpServerConfig, ModelRoutingPolicy, ModelSelectionSettings, NoteRevision,
-    ProjectionError, ProviderConfig, ReviewItem, RunContinuationSummary, RunId, RunLeaseRecord,
-    RuntimeSnapshot, SyllabusRevision, ThreadContextSummary, UserPreferences,
+    LunaProject, McpServerConfig, ModelCompatibilityVerification, ModelRoutingPolicy,
+    ModelSelectionSettings, NoteRevision, ProjectionError, ProviderConfig, ReviewItem,
+    RunContinuationSummary, RunId, RunLeaseRecord, RuntimeSnapshot, SyllabusRevision,
+    ThreadContextSummary, UserPreferences,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use thiserror::Error;
@@ -319,6 +321,21 @@ CREATE INDEX IF NOT EXISTS idx_run_leases_expiry
 ON run_leases(expires_at);
 "#;
 
+const MIGRATION_11: &str = r#"
+CREATE TABLE IF NOT EXISTS model_compatibility_verifications (
+    verification_key TEXT PRIMARY KEY,
+    provider_config_id TEXT NOT NULL,
+    credential_reference_id TEXT NOT NULL,
+    verified_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_compatibility_provider
+ON model_compatibility_verifications(provider_config_id);
+
+CREATE INDEX IF NOT EXISTS idx_model_compatibility_credential
+ON model_compatibility_verifications(credential_reference_id);
+"#;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AppendOutcome {
     Appended { sequence: u64 },
@@ -392,6 +409,11 @@ impl SqliteEventStore {
         connection.execute_batch(MIGRATION_10)?;
         connection.execute(
             "INSERT OR IGNORE INTO schema_migrations(version) VALUES (10)",
+            [],
+        )?;
+        connection.execute_batch(MIGRATION_11)?;
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version) VALUES (11)",
             [],
         )?;
         Ok(Self {
@@ -607,6 +629,68 @@ impl SqliteEventStore {
             configs.push(serde_json::from_str(&row?)?);
         }
         Ok(configs)
+    }
+
+    pub fn save_model_compatibility_verification(
+        &self,
+        verification: &ModelCompatibilityVerification,
+    ) -> Result<(), StorageError> {
+        let connection = self.lock()?;
+        let verification_key = serde_json::to_string(verification)?;
+        connection.execute(
+            "INSERT INTO model_compatibility_verifications(
+                verification_key, provider_config_id, credential_reference_id
+             ) VALUES (?1, ?2, ?3)
+             ON CONFLICT(verification_key) DO UPDATE SET
+                verified_at = CURRENT_TIMESTAMP",
+            params![
+                verification_key,
+                verification.provider_config_id,
+                verification.credential_reference_id
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn model_compatibility_verification_keys(&self) -> Result<BTreeSet<String>, StorageError> {
+        let connection = self.lock()?;
+        let mut statement = connection.prepare(
+            "SELECT verification_key
+             FROM model_compatibility_verifications
+             ORDER BY verification_key",
+        )?;
+        let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut keys = BTreeSet::new();
+        for row in rows {
+            keys.insert(row?);
+        }
+        Ok(keys)
+    }
+
+    pub fn clear_model_compatibility_verifications_for_provider_config(
+        &self,
+        provider_config_id: &str,
+    ) -> Result<(), StorageError> {
+        let connection = self.lock()?;
+        connection.execute(
+            "DELETE FROM model_compatibility_verifications
+             WHERE provider_config_id = ?1",
+            [provider_config_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn clear_model_compatibility_verifications_for_credential_reference(
+        &self,
+        credential_reference_id: &str,
+    ) -> Result<(), StorageError> {
+        let connection = self.lock()?;
+        connection.execute(
+            "DELETE FROM model_compatibility_verifications
+             WHERE credential_reference_id = ?1",
+            [credential_reference_id],
+        )?;
+        Ok(())
     }
 
     pub fn save_mcp_server_config(&self, config: &McpServerConfig) -> Result<(), StorageError> {
