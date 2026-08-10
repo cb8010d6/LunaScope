@@ -51,6 +51,14 @@ jobs:
       - name: Rust tests
         run: cargo test --workspace
 
+      - name: Deterministic attachment fixture smoke
+        shell: pwsh
+        run: |
+          $fixtureRoot = Join-Path $env:RUNNER_TEMP 'lunascope-canary-fixtures'
+          pwsh -NoProfile -File ./scripts/create-release-canary-fixtures.ps1 -OutputDirectory $fixtureRoot -Validate
+          $env:LUNASCOPE_ATTACHMENT_FIXTURE_ROOT = $fixtureRoot
+          cargo test -p lunascope-desktop --lib common_document_fixture_canary -- --ignored --nocapture
+
       - name: TypeScript typecheck
         run: npm run typecheck
 
@@ -103,7 +111,8 @@ jobs:
           Runner: ${{ runner.os }}
           Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
-          All required Rust, TypeScript, contract, deterministic asset,
+          All required Rust, TypeScript, contract, deterministic asset and
+          attachment fixture,
           release-gate, frontend, Tauri desktop build, and production audit
           steps completed successfully.
           "@ | Set-Content -LiteralPath TEST_SUMMARY.md -Encoding utf8
