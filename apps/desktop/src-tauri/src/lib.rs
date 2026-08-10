@@ -24,15 +24,19 @@ use lunascope_integrations::{
     ProviderMessageRole, SecretValue, normalize_custom_reasoning_effort, parse_routing_preference,
     validate_model_selection_settings, validate_provider_config, validate_routing_policy,
 };
-use lunascope_runtime::{PolicyEngine, ToolRouter};
+use lunascope_runtime::{
+    EnvironmentInventory, EnvironmentPreflight, EnvironmentPreflightContext, PolicyEngine,
+    ToolRouter, WorkspaceAccess,
+};
 use lunascope_storage::SqliteEventStore;
 use serde::{Deserialize, Serialize};
-use tauri::{Manager, State, ipc::Channel};
+use tauri::{AppHandle, Manager, State, ipc::Channel};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 mod attachment;
 mod companion;
+mod data_paths;
 mod harness_prompt;
 mod orchestration;
 mod project;
@@ -91,6 +95,14 @@ struct ExtensionDirectories {
 struct McpCredentialInput {
     reference_id: String,
     secret: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EnvironmentPreflightRequest {
+    workspace_root: String,
+    #[serde(default)]
+    required_capabilities: Vec<String>,
 }
 
 #[tauri::command]
@@ -623,10 +635,10 @@ fn parse_model_routing_draft(json: &str) -> Result<NaturalLanguageRoutingDraft, 
                     .entry("hardConstraint")
                     .or_insert(serde_json::Value::Bool(false));
             }
-            if let Some(role) = preference.get_mut("role") {
-                if let Some(normalized) = role.as_str().and_then(normalize_model_role) {
-                    *role = serde_json::Value::String(normalized.to_owned());
-                }
+            if let Some(role) = preference.get_mut("role")
+                && let Some(normalized) = role.as_str().and_then(normalize_model_role)
+            {
+                *role = serde_json::Value::String(normalized.to_owned());
             }
             if let Some(providers) = preference
                 .get_mut("preferredProviders")
@@ -766,6 +778,166 @@ fn save_model_selection_settings_with_state(
 #[tauri::command]
 fn extension_directories() -> Result<ExtensionDirectories, String> {
     ensure_extension_directories()
+}
+
+fn environment_preflight_for(
+    state: &AppState,
+    workspace_root: &Path,
+    required_capabilities: BTreeSet<String>,
+) -> Result<EnvironmentPreflight, String> {
+    let workspace_access = if !workspace_root.is_absolute() || !workspace_root.is_dir() {
+        WorkspaceAccess::Missing
+    } else {
+        match fs::read_dir(workspace_root) {
+            Ok(_) => WorkspaceAccess::Accessible,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+                WorkspaceAccess::PermissionDenied
+            }
+            Err(_) => WorkspaceAccess::Missing,
+        }
+    };
+    let inventory = EnvironmentInventory::inspect(workspace_root);
+    let providers = state.store.provider_configs().map_err(display_error)?;
+    let enabled_providers = providers
+        .iter()
+        .filter(|provider| provider.enabled)
+        .collect::<Vec<_>>();
+    let settings = state
+        .store
+        .model_selection_settings("global")
+        .map_err(display_error)?;
+    let orchestration_model_configured = settings.as_ref().is_some_and(|settings| {
+        !settings.orchestration.model_id.trim().is_empty()
+            && enabled_providers
+                .iter()
+                .any(|provider| provider.id == settings.orchestration.provider_config_id)
+    });
+    let orchestration_model_verified = if orchestration_model_configured {
+        let settings = settings.as_ref().expect("configured settings are present");
+        let effort = assignment_custom_reasoning_effort(settings, &settings.orchestration)?;
+        let key = reasoning_test_key(
+            &settings.orchestration.provider_config_id,
+            &settings.orchestration.model_id,
+            effort.as_deref(),
+        )?;
+        state
+            .verified_reasoning_configs
+            .lock()
+            .map_err(|_| "reasoning test registry is unavailable".to_owned())?
+            .contains(&key)
+    } else {
+        false
+    };
+    let paths = data_paths::current().map_err(display_error)?;
+    let data_root = paths.root().to_path_buf();
+    let data_root_probe = data_paths::verify_current_writable();
+    let mut report = inventory.evaluate_preflight(&EnvironmentPreflightContext {
+        data_root: data_root.to_string_lossy().into_owned(),
+        data_root_source: paths.source().as_str().into(),
+        data_root_writable: data_root_probe.is_ok(),
+        workspace_root: workspace_root.to_string_lossy().into_owned(),
+        workspace_access,
+        provider_configured: !enabled_providers.is_empty(),
+        orchestration_model_configured,
+        orchestration_model_verified,
+        required_capabilities,
+    });
+    if let Err(error) = data_root_probe
+        && let Some(issue) = report
+            .issues
+            .iter_mut()
+            .find(|issue| issue.code == lunascope_core::DiagnosticCode::DataRootNotWritable)
+    {
+        issue.technical_detail = Some(error.to_string());
+    }
+    if let Some(startup_issue) = paths.startup_issue() {
+        let configured = startup_issue
+            .configured_root()
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "the saved data directory".into());
+        let code = if startup_issue
+            .technical_detail()
+            .starts_with("DATA_ROOT_NOT_WRITABLE:")
+        {
+            lunascope_core::DiagnosticCode::DataRootNotWritable
+        } else {
+            lunascope_core::DiagnosticCode::DataRootUnavailable
+        };
+        report.issues.insert(
+            0,
+            lunascope_core::ActionableDiagnostic::error(
+                code,
+                "Reconnect or replace the saved data directory",
+                format!("The saved LunaScope data directory is unavailable: {configured}."),
+                "LunaScope opened a per-user recovery directory so the application can start, but Agent tasks are blocked to avoid splitting or overwriting existing data.",
+                [
+                    "Reconnect the original drive and retry the environment check.",
+                    "Or choose a writable replacement data directory, then restart LunaScope.",
+                ],
+            )
+            .with_technical_detail(startup_issue.technical_detail()),
+        );
+        report.ready = false;
+        report.summary = format!(
+            "{} issue{} needs attention",
+            report.issues.len(),
+            if report.issues.len() == 1 { "" } else { "s" }
+        );
+    }
+    Ok(report)
+}
+
+#[tauri::command]
+fn environment_preflight(
+    state: State<'_, AppState>,
+    request: EnvironmentPreflightRequest,
+) -> Result<EnvironmentPreflight, String> {
+    let required_capabilities = request
+        .required_capabilities
+        .into_iter()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| {
+            matches!(
+                value.as_str(),
+                "node" | "npm" | "python" | "cargo" | "browser"
+            )
+        })
+        .collect();
+    environment_preflight_for(
+        state.inner(),
+        Path::new(request.workspace_root.trim()),
+        required_capabilities,
+    )
+}
+
+#[tauri::command]
+fn diagnose_error(message: String) -> lunascope_core::ActionableDiagnostic {
+    lunascope_core::classify_error(&message)
+}
+
+#[tauri::command]
+fn redact_diagnostics(payload: String) -> Result<String, String> {
+    if payload.len() > 1024 * 1024 {
+        return Err("diagnostic payload exceeds 1 MiB".into());
+    }
+    Ok(lunascope_core::redact_sensitive_text(&payload))
+}
+
+#[tauri::command]
+fn configure_data_root(app: AppHandle, path: String) -> Result<String, String> {
+    let candidate = Path::new(path.trim());
+    if path.trim().is_empty() {
+        return Err("DATA_ROOT_UNAVAILABLE: choose a data directory".into());
+    }
+    let config_dir = app.path().app_config_dir().map_err(display_error)?;
+    data_paths::configure(&config_dir, candidate)
+        .map(|root| root.to_string_lossy().into_owned())
+        .map_err(display_error)
+}
+
+#[tauri::command]
+fn restart_application(app: AppHandle) {
+    app.request_restart();
 }
 
 #[tauri::command]
@@ -1119,7 +1291,9 @@ fn ensure_extension_directories() -> Result<ExtensionDirectories, String> {
     let _guard = EXTENSION_DIRECTORY_LOCK
         .lock()
         .map_err(|_| "extension directory lock is poisoned".to_owned())?;
-    let root = data_root()?.join("extensions");
+    let root = data_paths::current()
+        .map(|paths| paths.extensions())
+        .map_err(display_error)?;
     let system_skills = root.join("skills").join("system");
     let user_skills = root.join("skills").join("user");
     let tools = root.join("tools");
@@ -1204,25 +1378,23 @@ fn prune_stale_system_skill_files(
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
                 Err(error) => return Err(display_error(error)),
             };
-            if is_empty {
-                if let Err(error) = fs::remove_dir(&path) {
-                    if !matches!(
-                        error.kind(),
-                        std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
-                    ) {
-                        return Err(display_error(error));
-                    }
-                }
+            if is_empty
+                && let Err(error) = fs::remove_dir(&path)
+                && !matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                )
+            {
+                return Err(display_error(error));
             }
             continue;
         }
         let relative = path.strip_prefix(root).map_err(display_error)?;
-        if !retained_paths.contains(relative) {
-            if let Err(error) = fs::remove_file(&path) {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    return Err(display_error(error));
-                }
-            }
+        if !retained_paths.contains(relative)
+            && let Err(error) = fs::remove_file(&path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            return Err(display_error(error));
         }
     }
     Ok(())
@@ -1493,13 +1665,21 @@ pub(crate) fn display_error(error: impl std::fmt::Display) -> String {
 }
 
 pub(crate) fn data_root() -> Result<PathBuf, String> {
-    let drive = Path::new(r"D:\");
-    if !drive.exists() {
-        return Err(
-            "D: drive is unavailable; first-run data-directory selection is required".into(),
-        );
-    }
-    Ok(drive.join("LunaScopeData"))
+    data_paths::current()
+        .map(|paths| paths.root().to_path_buf())
+        .map_err(display_error)
+}
+
+fn data_root_recovery_command_allowed(command: &str) -> bool {
+    matches!(
+        command,
+        "environment_preflight"
+            | "diagnose_error"
+            | "redact_diagnostics"
+            | "configure_data_root"
+            | "restart_application"
+            | "get_user_preferences"
+    )
 }
 
 #[tauri::command]
@@ -1512,16 +1692,27 @@ fn default_workspace_root() -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    tauri::Builder::<tauri::Wry>::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let root = data_root().map_err(std::io::Error::other)?;
-            let state_dir = root.join("state");
-            fs::create_dir_all(&state_dir)?;
+            let config_dir = app.path().app_config_dir()?;
+            let default_root = app.path().app_local_data_dir()?;
+            let legacy_root = data_paths::legacy_root();
+            let paths = data_paths::initialize(&config_dir, &default_root, &legacy_root)
+                .map_err(std::io::Error::other)?;
+            for directory in paths.companion_asset_directories() {
+                app.asset_protocol_scope()
+                    .allow_directory(directory, true)?;
+            }
+            let state_dir = paths.state();
             let store = SqliteEventStore::open(state_dir.join("lunascope.db"))
                 .map_err(std::io::Error::other)?;
-            ensure_extension_directories().map_err(std::io::Error::other)?;
-            ensure_builtin_mcp_configs(&store).map_err(std::io::Error::other)?;
+            if paths.startup_issue().is_none() {
+                ensure_extension_directories().map_err(std::io::Error::other)?;
+            }
+            if paths.startup_issue().is_none() {
+                ensure_builtin_mcp_configs(&store).map_err(std::io::Error::other)?;
+            }
             if let Err(error) =
                 tauri::async_runtime::block_on(companion::models::cleanup_preload_cache())
             {
@@ -1538,7 +1729,9 @@ pub fn run() {
             companion::restore_window_visibility(app.handle());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler({
+            let handler: Box<tauri::ipc::InvokeHandler<tauri::Wry>> = Box::new(
+                tauri::generate_handler![
             create_run,
             delete_conversation,
             get_runtime_snapshot,
@@ -1623,8 +1816,27 @@ pub fn run() {
             project::create_project_file,
             project::patch_project_file,
             route_tools,
-            default_workspace_root
-        ])
+            default_workspace_root,
+            environment_preflight,
+            diagnose_error,
+            redact_diagnostics,
+            configure_data_root,
+                    restart_application
+                ],
+            );
+            move |invoke: tauri::ipc::Invoke<tauri::Wry>| {
+                let blocked = data_paths::recovery_mode()
+                    && !data_root_recovery_command_allowed(invoke.message.command());
+                if blocked {
+                    invoke.resolver.reject(
+                        "DATA_ROOT_UNAVAILABLE: LunaScope is in data-directory recovery mode. Choose a valid data directory and restart before changing persistent state.",
+                    );
+                    true
+                } else {
+                    handler(invoke)
+                }
+            }
+        })
         .build(tauri::generate_context!())
         .expect("failed to build LunaScope desktop")
         .run(|app, event| {
@@ -1662,6 +1874,30 @@ pub fn run() {
 mod tests {
     use super::*;
     use lunascope_core::McpHeader;
+
+    #[test]
+    fn data_root_recovery_allows_only_diagnosis_and_reconfiguration_commands() {
+        for command in [
+            "environment_preflight",
+            "diagnose_error",
+            "redact_diagnostics",
+            "configure_data_root",
+            "restart_application",
+            "get_user_preferences",
+        ] {
+            assert!(data_root_recovery_command_allowed(command), "{command}");
+        }
+        for command in [
+            "create_run",
+            "save_provider_config",
+            "save_project",
+            "companion_import_model",
+            "run_native_orchestration",
+            "create_project_file",
+        ] {
+            assert!(!data_root_recovery_command_allowed(command), "{command}");
+        }
+    }
 
     fn repository_root() -> String {
         Path::new(env!("CARGO_MANIFEST_DIR"))

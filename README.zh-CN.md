@@ -1,12 +1,22 @@
 # LunaScope
 
-**望月者计划 / The Moonwatcher Project**
+LunaScope 是一个 Windows 优先的本地 AI Agent 工作台：把复杂任务变成对文件的可观察、权限有界、独立验收的运行。
 
-面向 Windows、本地优先，适合长时间运行、过程可观察、多模型协作的 Agent 工作台。
+[English](README.md) · [下载 0.3.1](https://github.com/LagrangeNSS/LunaScope/releases/tag/v0.3.1) · [5 分钟快速开始](docs/QUICKSTART.md) · [故障排查](docs/TROUBLESHOOTING.md) · [安全策略](SECURITY.md)
 
-[English](README.md) · [下载 0.3.1](https://github.com/LagrangeNSS/LunaScope/releases/tag/v0.3.1) · [运行架构](docs/AGENT_RUNTIME_ARCHITECTURE.md) · [安全模型](docs/THREAT_MODEL.md) · [第三方声明](docs/THIRD_PARTY_NOTICES.md)
+三个核心承诺：
 
-LunaScope 关注的是模型说“我可以做”之后发生的事：把对话转换成可持久化的运行，为模型提供有边界的本地工具，把复杂任务拆成可检查的 Worker，让文件变更与验收证据保持可见，并在验证失败后进行针对性修复。0.3.1 是可运行的 Windows 工程预览版，具备 Rust 原生执行核心，但还不是包装完成的商业正式版。
+- **规划并执行**：把请求转换成可持久化、依赖明确的 Agent 图。
+- **看见每个重要操作**：工具、文件变更、权限、重试与证据保持可见。
+- **独立验收结果**：隔离 Worker 变更，完成前必须形成独立验证记录。
+
+## 下载与 3 步快速开始
+
+1. 下载安装器或便携可执行文件，并核对 `SHA256SUMS.txt`。
+2. **配置 Provider**：在设置中保存 Provider，然后选择项目文件夹并开始任务。
+3. **选择文件夹**：创建项目 workspace，输入任务并开始。
+
+Git/WebView2 前置条件见[快速开始](docs/QUICKSTART.md)，数据位置与升级/卸载见[安装、升级与卸载](docs/INSTALLATION.md)。0.3.1 仍是公开工程预览版，当前正在进行 RC 加固。项目尚无最终发行 License，公开二进制也未签名；两者都是明确的 Stable 发布门禁。
 
 ## 0.3.1 Release
 
@@ -135,7 +145,7 @@ LunaScope 把提供商品牌和传输协议分开配置，因此官方接口和�
 
 凭据通过引用 ID 指向 Windows Credential Manager。密钥值不会写入项目 JSON、事件、日志、README 或 WebView。
 
-## UltraNote
+## 可选工作流：UltraNote
 
 UltraNote 是 LunaScope 的课程与文档学习工作流，不是独立的模型模式。在普通项目中，使用 `/ultranote` 触发当前请求；如果项目在创建时就选择 UltraNote，则其中每个对话都会自动获得同一份持久化课程上下文，不再需要输入命令。
 
@@ -191,6 +201,8 @@ flowchart LR
 用户要求可视化笔记时，Agent 可以生成离线互动 HTML 页面，包括本地资源、响应式排版、图表、公式和适合任务的交互控件。浏览器验收在有界临时副本中运行，默认关闭外部网络。UltraNote 的 PDF 导出会把笔记 Markdown 转换成本地打印文档，使用随包提供的 Mermaid 与 KaTeX/MathML，等待渲染完成后调用已安装的 Microsoft Edge 输出无页眉页脚 PDF。
 
 如果 PDF 渲染失败，系统会保留 Markdown 和 HTML，而不是丢失笔记。因此 PDF 功能依赖受支持的 Windows 环境和 Microsoft Edge。
+
+桌面伙伴同样是可选工作流，与 Agent 执行核心相互独立；实现和资产许可边界见 [docs/COMPANION_MODULE.md](docs/COMPANION_MODULE.md)。
 
 ## 工具、权限、Skills 与 MCP
 
@@ -259,9 +271,9 @@ npm run tauri -- build
 
 安装器会生成在 `target/release/bundle/nsis/LunaScope_0.3.1_x64-setup.exe`。
 
-## 0.3.1 验证记录
+## 持续验证与发布门禁
 
-本次 Release 使用公开源码快照构建，并通过以下本地门禁：
+Pull Request 和 `main` 由 GitHub Actions 执行：
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -270,11 +282,17 @@ npm run tauri -- build
 - `npm run typecheck`
 - `npm run contract:check`
 - `npm run test:companion-assets`
-- `npm run evals:check`
+- `npm run test:pixi-runtime`
+- `npm run test:tauri-csp`
+- `npm run test:environment-preflight`
+- `npm run evals:manifest-check`
+- `npm run evals:tier1`
+- `npm run release:gate:test`
+- `npm run test:release-evidence-redaction`
 - `npm run build`
-- `npm run tauri -- build`
+- `npm audit --omit=dev`
 
-确定性的 Rust 测试全部通过。需要付费 Provider 凭据、用户明确提供的测试资料路径、真实网络或持久化外部 workspace 的测试默认保持 ignored。`evals/manifest.json` 只定义了 12 组证据契约，并明确标记为 `defined_not_run`；它不是虚构的真实模型评测结果。
+`evals/manifest.json` 定义 12 个证据契约并明确标记 `defined_not_run`；`evals:manifest-check` 只是结构校验，不是真实 eval。Tier 1 只使用本地确定性 fixture，不使用付费凭据。Stable 还要求根目录 `LICENSE`、真实 Windows 签名、来自同一源码提交的近期 GitHub canary，以及至少两小时的已审查 endurance 证据。CI 不会伪造这些外部门禁。
 
 ## 安全、隐私与当前限制
 
@@ -311,6 +329,6 @@ HarmonyOS Sans 按随附许可使用。完整上游版本、来源、许可证�
 
 ## 参与开发
 
-请先阅读 Rust 契约边界、架构决策、风险登记和威胁模型。任何削弱凭据隔离、工具顺序、持久化事件语义、路径范围、权限校验、worktree 隔离或独立验证的改动，都属于安全敏感的架构变更，而不是普通 UI 调整。
+请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)、Rust 契约边界、架构决策、风险登记和威胁模型。任何削弱凭据隔离、工具顺序、持久化事件语义、路径范围、权限校验、worktree 隔离或独立验证的改动，都属于安全敏感的架构变更，而不是普通 UI 调整。
 
 公开仓库的目的，是让实现可以被审阅，让 0.3.1 Windows 构建可以复现。项目许可证、代码签名和剩余长时间发布门禁仍被明确列为未完成事项，而不是用成熟度宣传掩盖。

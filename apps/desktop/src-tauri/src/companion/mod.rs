@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
-use crate::{data_root, display_error};
+use crate::display_error;
 
 mod avatar;
 #[allow(dead_code)]
@@ -85,7 +85,9 @@ pub(crate) struct CompanionRendererStatus {
 }
 
 fn companion_root() -> Result<PathBuf, String> {
-    Ok(data_root()?.join("companion"))
+    crate::data_paths::current()
+        .map(|paths| paths.companion())
+        .map_err(display_error)
 }
 
 fn settings_path() -> Result<PathBuf, String> {
@@ -225,9 +227,54 @@ fn spine_model_files(source: &Path) -> Result<Vec<PathBuf>, String> {
     let mut total_bytes = 0_u64;
     let mut has_atlas = false;
     let mut has_texture = false;
+    collect_spine_model_files(
+        directory,
+        0,
+        &mut files,
+        &mut total_bytes,
+        &mut has_atlas,
+        &mut has_texture,
+    )?;
+    if !has_atlas || !has_texture {
+        return Err("the selected Spine model needs an atlas and at least one texture".into());
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn collect_spine_model_files(
+    directory: &Path,
+    depth: usize,
+    files: &mut Vec<PathBuf>,
+    total_bytes: &mut u64,
+    has_atlas: &mut bool,
+    has_texture: &mut bool,
+) -> Result<(), String> {
+    if depth > 8 {
+        return Err("Spine model directory nesting exceeds 8 levels".into());
+    }
     for entry in fs::read_dir(directory).map_err(display_error)? {
-        let path = entry.map_err(display_error)?.path();
-        if !path.is_file() || !is_spine_model_asset(&path) {
+        let entry = entry.map_err(display_error)?;
+        let file_type = entry.file_type().map_err(display_error)?;
+        let path = entry.path();
+        if file_type.is_symlink() {
+            return Err(format!(
+                "Spine model contains a symbolic link: {}",
+                path.display()
+            ));
+        }
+        if file_type.is_dir() {
+            collect_spine_model_files(
+                &path,
+                depth + 1,
+                files,
+                total_bytes,
+                has_atlas,
+                has_texture,
+            )?;
+            continue;
+        }
+        if !file_type.is_file() || !is_spine_model_asset(&path) {
             continue;
         }
         let size = fs::metadata(&path).map_err(display_error)?.len();
@@ -237,29 +284,26 @@ fn spine_model_files(source: &Path) -> Result<Vec<PathBuf>, String> {
                 path.display()
             ));
         }
-        total_bytes = total_bytes
+        *total_bytes = total_bytes
             .checked_add(size)
             .ok_or("Spine model size overflow")?;
-        if total_bytes > MAX_MODEL_TOTAL_BYTES {
+        if *total_bytes > MAX_MODEL_TOTAL_BYTES {
             return Err("Spine model assets exceed 256 MiB".into());
         }
         match path.extension().and_then(|value| value.to_str()) {
-            Some(value) if value.eq_ignore_ascii_case("atlas") => has_atlas = true,
+            Some(value) if value.eq_ignore_ascii_case("atlas") => *has_atlas = true,
             Some(value)
                 if ["png", "jpg", "jpeg", "webp"]
                     .iter()
                     .any(|extension| value.eq_ignore_ascii_case(extension)) =>
             {
-                has_texture = true;
+                *has_texture = true;
             }
             _ => {}
         }
         files.push(path);
     }
-    if !has_atlas || !has_texture {
-        return Err("the selected Spine model needs an atlas and at least one texture".into());
-    }
-    Ok(files)
+    Ok(())
 }
 
 fn is_live2d_model_asset(path: &Path) -> bool {
@@ -931,6 +975,27 @@ mod tests {
         assert!(is_live2d_model_asset(Path::new("character.moc3")));
         assert!(is_live2d_model_asset(Path::new("voice.ogg")));
         assert!(!is_live2d_model_asset(Path::new("setup.js")));
+    }
+
+    #[test]
+    fn spine_import_collects_nested_runtime_assets() {
+        let temporary = tempfile::tempdir().expect("temporary Spine model");
+        let root = temporary.path();
+        let pages = root.join("pages");
+        fs::create_dir_all(&pages).expect("pages directory");
+        let skel = root.join("character.skel");
+        fs::write(&skel, b"skel").expect("skeleton");
+        fs::write(pages.join("character.atlas"), b"page.png\nsize: 1,1\n").expect("atlas");
+        fs::write(pages.join("page.png"), b"png").expect("texture");
+
+        let files = spine_model_files(&skel).expect("nested Spine assets");
+
+        assert!(
+            files
+                .iter()
+                .any(|path| path.ends_with("pages/character.atlas"))
+        );
+        assert!(files.iter().any(|path| path.ends_with("pages/page.png")));
     }
 
     #[test]

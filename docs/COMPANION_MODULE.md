@@ -43,10 +43,10 @@ Tauri 进程中的独立透明 WebView，通过受限命令读取设置和导入
 
 ## 数据与安全边界
 
-- 设置：`<LunaScopeData 目录>/companion/settings.json`
-- 模型副本：`<LunaScopeData 目录>/companion/models`
-- 临时预加载：`<LunaScopeData 目录>/companion/preload`（关闭或下次启动清理）
-- Live2D Core：`<LunaScopeData 目录>/companion/runtime`
+- 设置：`<data-root>/companion/settings.json`
+- 模型副本：`<data-root>/companion/models`
+- 临时预加载：`<data-root>/companion/preload`（关闭或下次启动清理）
+- Live2D Core：`<data-root>/companion/runtime`
 - 单文件上限 64 MiB，模型总量上限 256 MiB；Live2D Core 上限 4 MiB，并固定
   官方文件 SHA-256；已有缓存不匹配时不会执行。
 - Spine 只复制 `.skel`、`.atlas` 和纹理；Live2D 使用递归 allowlist，拒绝符号

@@ -100,7 +100,7 @@ pub fn domain_pack_catalog() -> Vec<DomainPackDescriptor> {
                 "Never modify binary assets without an explicit safe handling plan.",
                 "Scene, Prefab, and Blueprint changes require a reviewable representation.",
                 "Build, cook, and editor launch require approval.",
-                "Large assets belong under the configured D: data root.",
+                "Large assets belong under the configured LunaScope data root.",
             ],
             &["engine-detection", "game-systems", "build-log-analysis"],
             &["filesystem.read", "filesystem.patch", "process.run"],
@@ -139,7 +139,7 @@ pub fn domain_pack_catalog() -> Vec<DomainPackDescriptor> {
                 "Never fabricate a citation.",
                 "Verify DOI, author, and title before relying on a source.",
                 "Record environment and random seed for experiments.",
-                "Large datasets belong under the configured D: data root.",
+                "Large datasets belong under the configured LunaScope data root.",
             ],
             &[
                 "literature-search",
@@ -564,8 +564,8 @@ pub fn verify_domain_evidence(evidence: &DomainFlowEvidence) -> VerificationReco
             require(
                 item.large_asset_root
                     .as_deref()
-                    .is_none_or(|root| root.to_ascii_uppercase().starts_with("D:\\")),
-                "large assets outside C:",
+                    .is_none_or(is_absolute_data_root_evidence),
+                "absolute configured large-asset root",
                 &mut missing,
                 &mut confirmed,
             );
@@ -737,6 +737,20 @@ fn require(condition: bool, label: &str, missing: &mut Vec<String>, confirmed: &
 
 fn nonempty(value: &str) -> bool {
     !value.trim().is_empty()
+}
+
+fn is_absolute_data_root_evidence(value: &str) -> bool {
+    let value = value.trim();
+    if value.is_empty() || value.split(['/', '\\']).any(|component| component == "..") {
+        return false;
+    }
+    let bytes = value.as_bytes();
+    Path::new(value).is_absolute()
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'/' | b'\\'))
+        || value.starts_with(r"\\")
 }
 
 fn valid_date(value: &str) -> bool {
@@ -992,7 +1006,9 @@ mod tests {
                 editor_or_build_invoked: true,
                 editor_or_build_approval_id: Some("approval-1".into()),
                 verification_log_artifact_id: Some("build-log-1".into()),
-                large_asset_root: Some("D:\\LunaScopeData\\game-assets".into()),
+                large_asset_root: Some(
+                    r"C:\Users\Example\AppData\Local\LunaScopeData\game-assets".into(),
+                ),
             }),
             DomainFlowEvidence::Research(ResearchFlowEvidence {
                 facts_inferences_hypotheses_separated: true,
@@ -1029,9 +1045,32 @@ mod tests {
         ];
         for fixture in fixtures {
             let verification = verify_domain_evidence(&fixture);
-            assert_eq!(verification.status, VerificationStatus::Verified);
-            assert!(verification.remaining_risks.is_empty());
+            assert_eq!(
+                verification.status,
+                VerificationStatus::Verified,
+                "{}",
+                verification.summary
+            );
+            assert!(
+                verification.remaining_risks.is_empty(),
+                "missing evidence: {:?}",
+                verification.remaining_risks
+            );
         }
+    }
+
+    #[test]
+    fn large_asset_root_evidence_is_drive_agnostic_and_rejects_traversal() {
+        assert!(is_absolute_data_root_evidence(
+            r"C:\Users\Example\AppData\Local\LunaScopeData\game-assets"
+        ));
+        assert!(is_absolute_data_root_evidence(
+            r"E:\Portable\LunaScopeData\game-assets"
+        ));
+        assert!(!is_absolute_data_root_evidence(
+            r"E:\Portable\LunaScopeData\..\outside"
+        ));
+        assert!(!is_absolute_data_root_evidence("relative/game-assets"));
     }
 
     #[test]

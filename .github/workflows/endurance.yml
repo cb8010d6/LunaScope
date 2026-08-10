@@ -1,0 +1,40 @@
+name: Endurance Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_minutes:
+        description: Synthetic endurance duration in minutes (Stable requires at least 120)
+        required: true
+        default: "180"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  endurance:
+    runs-on: windows-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+
+      - name: Run synthetic restart and endurance suite
+        run: npm run endurance -- --duration-minutes ${{ inputs.duration_minutes }} --output artifacts/endurance/latest.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: endurance-evidence-${{ github.run_id }}
+          path: artifacts/endurance/latest.json
+          if-no-files-found: warn

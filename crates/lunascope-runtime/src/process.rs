@@ -53,14 +53,14 @@ impl ProcessExecutor {
         let mut resolved_programs = BTreeMap::new();
         for program in allowed_programs {
             let (name, path) = resolve_trusted_program(&program.into())?;
-            if let Some(existing) = resolved_programs.insert(name.clone(), path.clone()) {
-                if existing != path {
-                    return Err(ProcessError::ConflictingProgramPaths {
-                        name,
-                        first: existing,
-                        second: path,
-                    });
-                }
+            if let Some(existing) = resolved_programs.insert(name.clone(), path.clone())
+                && existing != path
+            {
+                return Err(ProcessError::ConflictingProgramPaths {
+                    name,
+                    first: existing,
+                    second: path,
+                });
             }
         }
         Ok(Self {

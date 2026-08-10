@@ -86,6 +86,11 @@ fn main() {
             "patch_project_file",
             "route_tools",
             "default_workspace_root",
+            "environment_preflight",
+            "diagnose_error",
+            "redact_diagnostics",
+            "configure_data_root",
+            "restart_application",
         ]),
     ))
     .expect("failed to build LunaScope Tauri permissions");

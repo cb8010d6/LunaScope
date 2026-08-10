@@ -87,4 +87,9 @@ permissions = [
   "allow-patch-project-file",
   "allow-route-tools",
   "allow-default-workspace-root",
+  "allow-environment-preflight",
+  "allow-diagnose-error",
+  "allow-redact-diagnostics",
+  "allow-configure-data-root",
+  "allow-restart-application",
 ]

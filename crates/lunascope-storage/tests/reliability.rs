@@ -212,7 +212,7 @@ fn sustained_event_ingest_snapshot_and_recovery_baseline() {
             store
                 .append_batch_next(events)
                 .expect("append stream batch");
-            if batch_end % 1_000 == 0 && batch_end < EVENT_COUNT {
+            if batch_end.is_multiple_of(1_000) && batch_end < EVENT_COUNT {
                 store
                     .create_snapshot(&run_id)
                     .expect("create periodic snapshot");

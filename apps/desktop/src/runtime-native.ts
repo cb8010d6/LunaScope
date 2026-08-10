@@ -15,7 +15,9 @@ import {
   requestConfirmation,
   showNotice,
 } from "./ui/custom-controls";
+import { requiredCapabilitiesForPlan } from "./environment-preflight";
 import type {
+  ActionableDiagnostic,
   AgentPlan,
   ConversationMessage,
   ConversationThread,
@@ -62,6 +64,26 @@ import type {
   UserPreferences,
   WorkerSpec,
 } from "../../../packages/runtime-contract/src/types.generated";
+
+type EnvironmentExecutableCapability = {
+  id: string;
+  path: string | null;
+  version: string | null;
+};
+
+type EnvironmentPreflight = {
+  ready: boolean;
+  summary: string;
+  issues: ActionableDiagnostic[];
+  dataRoot: string;
+  dataRootSource: string;
+  workspaceRoot: string;
+  inventory: {
+    executables: EnvironmentExecutableCapability[];
+    browser: { id: string; path: string } | null;
+    workspaceManifests: string[];
+  };
+};
 
 type RuntimeMessage =
   | { kind: "snapshot"; data: RuntimeSnapshot }
@@ -327,6 +349,9 @@ let userPreferences: UserPreferences = {
 const mcpServerStatuses = new Map<string, McpServerStatus>();
 let activeWorkspaceRoot = "";
 let pendingAttachments: ImportedAttachment[] = [];
+let latestEnvironmentPreflight: EnvironmentPreflight | null = null;
+let latestDiagnostic: ActionableDiagnostic | null = null;
+let dataRootRestartRequired = false;
 type ComputerAccessMode =
   | "request_approval"
   | "self_approve"
@@ -334,11 +359,11 @@ type ComputerAccessMode =
 let computerAccessMode: ComputerAccessMode = "self_approve";
 let bypassMode = false;
 let extensionDirectories: ExtensionDirectories = {
-  root: "D:\\LunaScopeData\\extensions",
-  systemSkills: "D:\\LunaScopeData\\extensions\\skills\\system",
-  userSkills: "D:\\LunaScopeData\\extensions\\skills\\user",
-  tools: "D:\\LunaScopeData\\extensions\\tools",
-  mcp: "D:\\LunaScopeData\\extensions\\mcp",
+  root: "",
+  systemSkills: "",
+  userSkills: "",
+  tools: "",
+  mcp: "",
 };
 let routingPolicy: ModelRoutingPolicy = {
   priorities: { quality: 80, cost: 50, speed: 50, privacy: 50 },
@@ -1235,6 +1260,17 @@ async function submitConversation(
     await submitLiveGuidance(text);
     return;
   }
+  const workspaceRoot = syncActiveWorkspace();
+  if (!workspaceRoot) {
+    await openProjectManager(true);
+    throw new Error(
+      tr(
+        "请先选择项目的 workspace 文件夹。",
+        "Choose a workspace folder for the project first.",
+      ),
+    );
+  }
+  await ensureEnvironmentPreflightReady(workspaceRoot);
   if (!activeConversationRunId || !activeConversationThreadId) {
     await createNewConversation();
   }
@@ -1334,6 +1370,219 @@ async function submitConversation(
     openOrchestration: true,
   });
   await executeNativeOrchestration();
+}
+
+function preflightIssueMessage(issue: ActionableDiagnostic): string {
+  const fixes = issue.howToFix
+    .map((step, index) => `${index + 1}. ${step}`)
+    .join("\n");
+  return `${issue.whatHappened}\n\n${tr("为什么需要处理", "Why this matters")}\n${issue.why}\n\n${tr("如何修复", "How to fix")}\n${fixes}`;
+}
+
+function renderEnvironmentPreflightPanel(): void {
+  const panel = document.querySelector<HTMLElement>(
+    "#environmentPreflightPanel",
+  );
+  if (!panel) return;
+  const report = latestEnvironmentPreflight;
+  if (!report) {
+    panel.innerHTML = `<article class="provider-card"><span class="settings-help">${tr("正在检查环境…", "Checking the environment…")}</span></article>`;
+    return;
+  }
+  const issue = report.issues[0] ?? null;
+  const issueMarkup = issue
+    ? `<div class="routing-review" style="margin-top:10px"><strong>${escapeHtml(issue.title)}</strong>\n${escapeHtml(issue.whatHappened)}\n\n${tr("为什么", "Why")}\n${escapeHtml(issue.why)}\n\n${tr("如何修复", "How to fix")}\n${escapeHtml(issue.howToFix.map((step, index) => `${index + 1}. ${step}`).join("\n"))}</div>`
+    : `<p class="settings-help" style="margin-top:10px">${tr("Data Root、workspace、Git、Provider 与编排模型均已通过首次任务检查。", "Data root, workspace, Git, Provider, and the orchestration model passed the first-task check.")}</p>`;
+  const executables = report.inventory.executables
+    .map(
+      (capability) =>
+        `${capability.id}: ${capability.path ?? tr("未找到", "not found")}${capability.version ? ` · ${capability.version}` : ""}`,
+    )
+    .join("\n");
+  const browser = report.inventory.browser
+    ? `${report.inventory.browser.id}: ${report.inventory.browser.path}`
+    : tr("未找到（仅需要浏览器验收的任务会阻断）", "not found (only browser-verification tasks are blocked)");
+  const manifests =
+    report.inventory.workspaceManifests.join("\n") || tr("无", "none");
+  const technical =
+    report.issues
+      .filter((item) => item.technicalDetail)
+      .map((item) => `${item.code}: ${item.technicalDetail}`)
+      .join("\n") || tr("无", "none");
+  const canReplaceDataRoot = issue?.code === "DATA_ROOT_UNAVAILABLE" ||
+    issue?.code === "DATA_ROOT_NOT_WRITABLE";
+  panel.innerHTML = `<article class="provider-card">
+    <header><div><strong>${escapeHtml(report.ready ? tr("环境已就绪", "Environment ready") : tr(`${report.issues.length} 个问题需要处理`, `${report.issues.length} issue${report.issues.length === 1 ? "" : "s"} needs attention`))}</strong><small>${escapeHtml(report.ready ? "Ready" : report.summary)}</small></div><span class="status ${report.ready ? "complete" : "failed"}">${report.ready ? tr("就绪", "READY") : tr("需处理", "ATTENTION")}</span></header>
+    ${issueMarkup}
+    <div class="row" style="margin-top:12px">
+      <button class="ghost-btn" type="button" data-native-action="retry-environment-preflight">${tr("重新检查", "Retry check")}</button>
+      ${canReplaceDataRoot ? `<button class="ghost-btn" type="button" data-native-action="choose-data-root">${tr("选择数据目录", "Choose data directory")}</button>` : ""}
+      <button class="text-btn" type="button" data-native-action="copy-diagnostics">${tr("复制脱敏诊断", "Copy redacted diagnostics")}</button>
+      ${dataRootRestartRequired ? `<button class="primary-btn" type="button" data-native-action="restart-application">${tr("重启 LunaScope", "Restart LunaScope")}</button>` : ""}
+    </div>
+    <details style="margin-top:12px"><summary>${tr("高级详情", "Advanced details")}</summary><div class="routing-review" style="margin-top:10px">Data root · ${escapeHtml(report.dataRoot)}\nSource · ${escapeHtml(report.dataRootSource)}\nWorkspace · ${escapeHtml(report.workspaceRoot || tr("未选择", "not selected"))}\n\nExecutables\n${escapeHtml(executables)}\n\nBrowser\n${escapeHtml(browser)}\n\nWorkspace manifests\n${escapeHtml(manifests)}\n\nTechnical detail\n${escapeHtml(technical)}</div></details>
+    <div class="settings-status" id="environmentPreflightStatus" role="status"></div>
+  </article>`;
+  refreshCustomControls(panel);
+}
+
+async function classifyNativeError(error: unknown): Promise<ActionableDiagnostic> {
+  const message = errorMessage(error);
+  if (isTauri()) {
+    latestDiagnostic = await invoke<ActionableDiagnostic>("diagnose_error", {
+      message,
+    });
+    return latestDiagnostic;
+  }
+  latestDiagnostic = {
+    code: "RUN_INTERRUPTED",
+    severity: "error",
+    title: tr("操作未完成", "Operation did not complete"),
+    whatHappened: message,
+    why: tr("浏览器预览没有完整桌面运行时。", "The browser preview does not include the full desktop runtime."),
+    howToFix: [tr("请在 LunaScope 桌面应用中重试。", "Retry in the LunaScope desktop app.")],
+    technicalDetail: message,
+    retryable: true,
+  };
+  return latestDiagnostic;
+}
+
+async function refreshEnvironmentPreflightPanel(): Promise<void> {
+  if (!isTauri()) {
+    renderEnvironmentPreflightPanel();
+    return;
+  }
+  try {
+    await checkEnvironmentPreflight(activeWorkspaceRoot);
+  } catch (error) {
+    const diagnostic = await classifyNativeError(error);
+    setSettingsStatus(
+      "environmentPreflightStatus",
+      `${diagnostic.whatHappened} ${diagnostic.howToFix[0] ?? ""}`,
+      "error",
+    );
+  }
+}
+
+async function writeClipboardText(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("clipboard write was rejected");
+}
+
+function clipboardDiagnostic(diagnostic: ActionableDiagnostic | null) {
+  if (!diagnostic) return null;
+  return {
+    code: diagnostic.code,
+    severity: diagnostic.severity,
+    title: diagnostic.title,
+    whatHappened: diagnostic.whatHappened,
+    why: diagnostic.why,
+    howToFix: diagnostic.howToFix,
+    retryable: diagnostic.retryable,
+  };
+}
+
+function clipboardEnvironment(report: EnvironmentPreflight | null) {
+  if (!report) return null;
+  return {
+    ready: report.ready,
+    summary: report.summary,
+    dataRootSource: report.dataRootSource,
+    workspaceSelected: Boolean(report.workspaceRoot),
+    issues: report.issues.map(clipboardDiagnostic),
+    inventory: {
+      executables: report.inventory.executables.map((capability) => ({
+        id: capability.id,
+        available: Boolean(capability.path),
+        version: capability.version,
+      })),
+      browser: report.inventory.browser
+        ? { id: report.inventory.browser.id, available: true }
+        : null,
+      workspaceManifests: report.inventory.workspaceManifests,
+    },
+  };
+}
+
+async function copyRedactedDiagnostics(): Promise<void> {
+  const payload = JSON.stringify(
+    {
+      generatedAt: new Date().toISOString(),
+      environment: clipboardEnvironment(latestEnvironmentPreflight),
+      latestDiagnostic: clipboardDiagnostic(latestDiagnostic),
+    },
+    null,
+    2,
+  );
+  const redacted = isTauri()
+    ? await invoke<string>("redact_diagnostics", { payload })
+    : payload;
+  await writeClipboardText(redacted);
+}
+
+async function checkEnvironmentPreflight(
+  workspaceRoot: string,
+  requiredCapabilities: string[] = [],
+): Promise<EnvironmentPreflight> {
+  const report = await invoke<EnvironmentPreflight>("environment_preflight", {
+    request: { workspaceRoot, requiredCapabilities },
+  });
+  latestEnvironmentPreflight = report;
+  latestDiagnostic = report.issues[0] ?? null;
+  renderEnvironmentPreflightPanel();
+  return report;
+}
+
+async function ensureEnvironmentPreflightReady(
+  workspaceRoot: string,
+  requiredCapabilities: string[] = [],
+): Promise<EnvironmentPreflight> {
+  let report = await checkEnvironmentPreflight(
+    workspaceRoot,
+    requiredCapabilities,
+  );
+  while (!report.ready) {
+    const issue = report.issues[0];
+    if (!issue) {
+      throw new Error(report.summary);
+    }
+    const dataRootIssue = issue.code === "DATA_ROOT_UNAVAILABLE" ||
+      issue.code === "DATA_ROOT_NOT_WRITABLE";
+    const retry = await requestConfirmation({
+      title: tr(
+        `${report.issues.length} 个问题需要处理`,
+        report.summary,
+      ),
+      message: preflightIssueMessage(issue),
+      confirmLabel: dataRootIssue
+        ? tr("打开环境设置", "Open environment settings")
+        : tr("重新检查", "Retry check"),
+      cancelLabel: tr("暂不运行", "Not now"),
+    });
+    if (!retry) {
+      throw new Error(`${issue.code}: ${issue.whatHappened}`);
+    }
+    if (dataRootIssue) {
+      const general = document.querySelector<HTMLButtonElement>(
+        '[data-settings-page="general"]',
+      );
+      if (general) showSettingsPage("general", general);
+      throw new Error(`${issue.code}: ${issue.whatHappened}`);
+    }
+    report = await checkEnvironmentPreflight(workspaceRoot, requiredCapabilities);
+  }
+  return report;
 }
 
 async function submitLiveGuidance(guidance: string): Promise<void> {
@@ -2138,6 +2387,11 @@ async function executeNativeOrchestration(): Promise<void> {
       ),
     );
   }
+  const requiredCapabilities = requiredCapabilitiesForPlan(
+    session.plan,
+    latestEnvironmentPreflight?.inventory.workspaceManifests ?? [],
+  );
+  await ensureEnvironmentPreflightReady(workspaceRoot, requiredCapabilities);
   nativeOrchestrationExecuting = true;
   nativeOrchestrationRunning = true;
   nativeOrchestrationPaused = false;
@@ -2283,11 +2537,12 @@ async function executeNativeOrchestration(): Promise<void> {
     if (isTauri()) {
       await invoke<boolean>("cancel_native_orchestration").catch(() => false);
     }
+    const diagnostic = await classifyNativeError(error);
     window.lunaScopeUi?.appendConversationEvent({
       id: `orchestration-run-${session.runId}`,
       type: "assistant_message",
       title: "LunaScope",
-      summary: `${tr("编排执行失败：", "Orchestration execution failed: ")}${errorMessage(error)}`,
+      summary: `${diagnostic.title}\n${diagnostic.whatHappened}\n${tr("为什么", "Why")}: ${diagnostic.why}\n${tr("下一步", "Next step")}: ${diagnostic.howToFix[0] ?? tr("复制诊断并重试。", "Copy diagnostics and retry.")}`,
       openOrchestration: true,
       retryConversation: false,
     });
@@ -3405,6 +3660,10 @@ function generalSettingsMarkup(): string {
       </select>
     </div>
     <div class="row" style="margin-top:14px"><button class="primary-btn" type="button" data-native-action="save-general-preferences">${tr("保存语言设置", "Save language settings")}</button></div>
+    <section style="margin-top:26px">
+      <div class="pane-head" style="padding-inline:0"><div><strong>${tr("运行环境", "Environment")}</strong><span class="settings-help">${tr("普通模式只显示是否就绪；路径、版本和清单位于高级详情。", "The normal view only shows readiness. Paths, versions, and manifests are in advanced details.")}</span></div></div>
+      <div id="environmentPreflightPanel"><article class="provider-card"><span class="settings-help">${tr("正在检查环境…", "Checking the environment…")}</span></article></div>
+    </section>
     <div class="settings-status" id="generalPreferencesStatus" role="status"></div>`;
 }
 
@@ -5106,6 +5365,7 @@ function showSettingsPage(page: string, button: HTMLButtonElement): void {
     void loadExtensionsWorkspace();
   } else if (page === "general") {
     panel.innerHTML = generalSettingsMarkup();
+    queueMicrotask(() => void refreshEnvironmentPreflightPanel());
   } else if (page === "companion") {
     void renderCompanionSettings(tr);
   } else if (page === "projects") {
@@ -5168,6 +5428,78 @@ async function handleNativeSettingsAction(
   const action = button.dataset.nativeAction;
   if (!action) return;
   if (await handleCompanionSettingsAction(action, tr, button)) return;
+  if (action === "retry-environment-preflight") {
+    button.disabled = true;
+    setSettingsStatus(
+      "environmentPreflightStatus",
+      tr("正在重新检查…", "Checking again…"),
+    );
+    try {
+      await refreshEnvironmentPreflightPanel();
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
+  if (action === "choose-data-root") {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: tr("选择 LunaScope 数据目录", "Choose LunaScope data directory"),
+    });
+    if (typeof selected !== "string") return;
+    button.disabled = true;
+    try {
+      const configured = await invoke<string>("configure_data_root", {
+        path: selected,
+      });
+      dataRootRestartRequired = true;
+      renderEnvironmentPreflightPanel();
+      setSettingsStatus(
+        "environmentPreflightStatus",
+        tr(
+          `已验证并保存数据目录：${configured}。重启后生效；原目录数据没有被复制或删除。`,
+          `The data directory was validated and saved: ${configured}. Restart to apply it. Data in the old directory was not copied or deleted.`,
+        ),
+        "success",
+      );
+    } catch (error) {
+      const diagnostic = await classifyNativeError(error);
+      renderEnvironmentPreflightPanel();
+      setSettingsStatus(
+        "environmentPreflightStatus",
+        `${diagnostic.whatHappened} ${diagnostic.howToFix[0] ?? ""}`,
+        "error",
+      );
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
+  if (action === "restart-application") {
+    await invoke("restart_application");
+    return;
+  }
+  if (action === "copy-diagnostics") {
+    button.disabled = true;
+    try {
+      await copyRedactedDiagnostics();
+      setSettingsStatus(
+        "environmentPreflightStatus",
+        tr("已复制脱敏诊断。", "Redacted diagnostics copied."),
+        "success",
+      );
+    } catch (error) {
+      setSettingsStatus(
+        "environmentPreflightStatus",
+        `${tr("复制失败", "Copy failed")}: ${errorMessage(error)}`,
+        "error",
+      );
+    } finally {
+      button.disabled = false;
+    }
+    return;
+  }
   if (action === "project-open-manager") {
     await openProjectManager(false);
     return;
@@ -6273,9 +6605,10 @@ async function handleNativeSettingsAction(
         "success",
       );
     } catch (error) {
+      const diagnostic = await classifyNativeError(error);
       setSettingsStatus(
         "providerActionStatus",
-        `连接失败：${errorMessage(error)}`,
+        `${diagnostic.title}: ${diagnostic.whatHappened} ${diagnostic.howToFix[0] ?? ""}`,
         "error",
       );
     } finally {
@@ -7168,6 +7501,23 @@ async function bootNativeRuntime(): Promise<void> {
   await loadUserPreferences();
   if (!isTauri()) {
     document.documentElement.dataset.runtimeAuthority = "browser-preview";
+    return;
+  }
+
+  const startupPreflight = await checkEnvironmentPreflight("");
+  if (startupPreflight.dataRootSource === "recovery_fallback") {
+    document.documentElement.dataset.runtimeAuthority = "data-root-recovery";
+    const general = document.querySelector<HTMLButtonElement>(
+      '[data-settings-page="general"]',
+    );
+    if (general) showSettingsPage("general", general);
+    const status = document.querySelector<HTMLElement>("#statusText");
+    if (status) {
+      status.textContent = tr(
+        "数据目录需要处理",
+        "DATA DIRECTORY NEEDS ATTENTION",
+      );
+    }
     return;
   }
 

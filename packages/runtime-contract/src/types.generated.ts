@@ -59,6 +59,12 @@ export type RiskLevel = "none" | "low" | "medium" | "high" | "critical";
 
 export type RedactionState = "not_required" | "redacted" | "contains_sensitive_data";
 
+export type DiagnosticCode = "DATA_ROOT_UNAVAILABLE" | "DATA_ROOT_NOT_WRITABLE" | "GIT_NOT_FOUND" | "PROVIDER_NOT_CONFIGURED" | "PROVIDER_AUTH_FAILED" | "PROVIDER_MODEL_UNSUPPORTED" | "MODEL_REASONING_TEST_REQUIRED" | "WORKSPACE_INVALID" | "WORKSPACE_PERMISSION_DENIED" | "BROWSER_NOT_AVAILABLE" | "TOOL_DEPENDENCY_MISSING" | "RUN_INTERRUPTED" | "RECOVERY_NEEDS_INTERVENTION" | "UNEXPECTED_FAILURE";
+
+export type DiagnosticSeverity = "error" | "warning";
+
+export type ActionableDiagnostic = { code: DiagnosticCode, severity: DiagnosticSeverity, title: string, whatHappened: string, why: string, howToFix: Array<string>, technicalDetail: string | null, retryable: boolean, };
+
 export type EventSource = { "kind": "user" } | { "kind": "system" } | { "kind": "orchestrator" } | { "kind": "worker", "id": WorkerId } | { "kind": "tool", "id": string } | { "kind": "mcp", "id": string } | { "kind": "bridge", "id": string };
 
 export type VerificationStatus = "verified" | "partially_verified" | "unverified" | "unable_to_verify" | "failed_verification";

@@ -236,10 +236,10 @@ fn reject_symlink_components(root: &Path, candidate: &Path) -> Result<(), SkillE
             }
             std::path::Component::Normal(part) => {
                 current.push(part);
-                if let Ok(metadata) = fs::symlink_metadata(&current) {
-                    if metadata.file_type().is_symlink() {
-                        return Err(SkillError::SymlinkResource(current));
-                    }
+                if let Ok(metadata) = fs::symlink_metadata(&current)
+                    && metadata.file_type().is_symlink()
+                {
+                    return Err(SkillError::SymlinkResource(current));
                 }
             }
             std::path::Component::Prefix(_) | std::path::Component::RootDir => {

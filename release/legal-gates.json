@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "status": "requires_owner_or_legal_review",
+  "findings": [
+    {
+      "id": "imbad0202-cc-by-nc",
+      "blocksStable": true,
+      "path": "apps/desktop/src-tauri/resources/system-skills",
+      "source": "https://github.com/Imbad0202/academic-research-skills/tree/2cf3a51e159458b7a8c8784bb874248e79601f7b",
+      "license": "CC BY-NC 4.0",
+      "finding": "The bundled academic research packages are noncommercial and cannot be included in a commercial LunaScope distribution without separate permission.",
+      "recommendation": "Obtain separate commercial permission or exclude these exact packages from a commercial distribution after an owner/legal decision. Do not silently relabel or replace the upstream license.",
+      "resolutionEvidence": null
+    },
+    {
+      "id": "ark-models-noassertion",
+      "blocksStable": true,
+      "path": "apps/desktop/src-tauri/resources/companion/catalog",
+      "source": "https://github.com/isHarryh/Ark-Models/tree/2f3187f780108847d7327946e1906fc6b80bead3",
+      "license": "NOASSERTION",
+      "finding": "The repository bundles metadata and local-download workflows for third-party character model assets whose upstream use and redistribution rights have not been verified.",
+      "recommendation": "Obtain owner/legal confirmation for the intended Stable distribution and catalog workflow, or disable the unresolved catalog entries in a separately reviewed change. Do not bundle model binaries.",
+      "resolutionEvidence": null
+    }
+  ]
+}

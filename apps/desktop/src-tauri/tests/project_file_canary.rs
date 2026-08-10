@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{env, fs, path::PathBuf};
 
 use lunascope_core::{LunaProject, ProjectFolder};
 use lunascope_runtime::{FilesystemTools, TextPatch, TextReplacement};
@@ -6,10 +6,14 @@ use lunascope_storage::SqliteEventStore;
 use uuid::Uuid;
 
 #[test]
-#[ignore = "writes a persistent verification project under D:\\LunaScopeData"]
+#[ignore = "writes a persistent verification project under LUNASCOPE_CANARY_DATA_ROOT"]
 fn creates_reads_and_modifies_a_persisted_lunascope_project() {
-    let verification_root = PathBuf::from(r"D:\LunaScopeData\verification");
-    let state_root = PathBuf::from(r"D:\LunaScopeData\state");
+    let data_root = env::var_os("LUNASCOPE_CANARY_DATA_ROOT")
+        .map(PathBuf::from)
+        .expect("set LUNASCOPE_CANARY_DATA_ROOT to an isolated persistent canary directory");
+    assert!(data_root.is_absolute(), "canary data root must be absolute");
+    let verification_root = data_root.join("verification");
+    let state_root = data_root.join("state");
     fs::create_dir_all(&verification_root).expect("create verification root");
     fs::create_dir_all(&state_root).expect("create state root");
 

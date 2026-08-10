@@ -310,14 +310,14 @@ impl ProtocolNormalizer {
             return Err(StreamProtocolError::MissingField("choices[0]"));
         };
         let mut events = Vec::new();
-        if let Some(delta) = choice.pointer("/delta/content").and_then(Value::as_str) {
-            if !delta.is_empty() {
-                self.text.push_str(delta);
-                events.push(NormalizedProviderEvent::TextDelta {
-                    sequence: self.sequence(),
-                    delta: delta.to_owned(),
-                });
-            }
+        if let Some(delta) = choice.pointer("/delta/content").and_then(Value::as_str)
+            && !delta.is_empty()
+        {
+            self.text.push_str(delta);
+            events.push(NormalizedProviderEvent::TextDelta {
+                sequence: self.sequence(),
+                delta: delta.to_owned(),
+            });
         }
         // Some OpenAI-compatible Providers require private reasoning replay when
         // a thinking turn contains tool calls. Capture it only for the next

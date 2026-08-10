@@ -1083,24 +1083,23 @@ fn validate_layer_geometry(
             );
         }
     }
-    if let Some(crop) = &layer.crop {
-        if [crop.x, crop.y, crop.width, crop.height]
+    if let Some(crop) = &layer.crop
+        && ([crop.x, crop.y, crop.width, crop.height]
             .iter()
             .any(|value| !value.is_finite())
             || crop.x < 0.0
             || crop.y < 0.0
             || crop.width <= 0.0
-            || crop.height <= 0.0
-        {
-            push_issue(
-                issues,
-                errors,
-                "error",
-                "layer.crop.invalid",
-                format!("{prefix}.crop"),
-                "Layer crop must use finite non-negative coordinates and positive dimensions.",
-            );
-        }
+            || crop.height <= 0.0)
+    {
+        push_issue(
+            issues,
+            errors,
+            "error",
+            "layer.crop.invalid",
+            format!("{prefix}.crop"),
+            "Layer crop must use finite non-negative coordinates and positive dimensions.",
+        );
     }
 }
 
@@ -1260,15 +1259,14 @@ fn validate_pack_relative_file(
     required_directory: Option<&str>,
 ) -> Result<PathBuf, String> {
     let relative = spine_assets::safe_relative_path(value)?;
-    if let Some(required_directory) = required_directory {
-        if relative
+    if let Some(required_directory) = required_directory
+        && relative
             .components()
             .next()
             .and_then(|value| value.as_os_str().to_str())
             != Some(required_directory)
-        {
-            return Err(format!("path must be inside {required_directory}/."));
-        }
+    {
+        return Err(format!("path must be inside {required_directory}/."));
     }
     contained_pack_file(root, value)
 }

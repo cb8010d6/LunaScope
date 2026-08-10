@@ -1,0 +1,221 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel
+        required: true
+        default: rc
+        type: choice
+        options: [rc, stable]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    uses: ./.github/workflows/ci.yml
+
+  build-windows:
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 60
+    outputs:
+      channel: ${{ steps.release-meta.outputs.channel }}
+      signed: ${{ steps.release-meta.outputs.signed }}
+      artifact_label: ${{ steps.release-meta.outputs.artifact_label }}
+    env:
+      WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+      WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-registry-${{ runner.os }}-
+
+      - run: npm ci
+
+      - name: Build production executable before bundling
+        run: npm run tauri -- build --no-bundle --ci
+
+      - name: Determine channel and sign the application executable when available
+        id: release-meta
+        shell: pwsh
+        run: |
+          $channel = "${{ inputs.channel }}"
+          if ([string]::IsNullOrWhiteSpace($channel)) {
+            $channel = if ("${{ github.ref_name }}" -match "-rc([.-]|$)") { "rc" } else { "stable" }
+          }
+          $signed = -not [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE) -and
+            -not [string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD)
+          if ($signed) {
+            .\scripts\sign-windows.ps1 -Paths target\release\lunascope-desktop.exe
+          } else {
+            Write-Warning "Signing unavailable - stable release gate not satisfied. Artifacts will be labeled unsigned-rc."
+          }
+          $artifactLabel = if ($signed) { "$channel-signed" } else { "unsigned-rc" }
+          "channel=$channel" >> $env:GITHUB_OUTPUT
+          "signed=$($signed.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "artifact_label=$artifactLabel" >> $env:GITHUB_OUTPUT
+
+      - name: Bundle NSIS installer from the already-built executable
+        run: npm run tauri -- bundle --bundles nsis --ci --no-sign
+
+      - name: Collect installer and portable executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          $installer = Get-ChildItem -LiteralPath target\release\bundle\nsis -Filter *.exe | Select-Object -First 1
+          if (-not $installer) { throw "NSIS installer was not produced" }
+          Copy-Item -LiteralPath $installer.FullName -Destination artifacts\LunaScope-setup.exe
+          Copy-Item -LiteralPath target\release\lunascope-desktop.exe -Destination artifacts\LunaScope-portable.exe
+
+      - name: Sign and verify the NSIS installer
+        if: steps.release-meta.outputs.signed == 'true'
+        shell: pwsh
+        run: |
+          .\scripts\sign-windows.ps1 -Paths artifacts\LunaScope-setup.exe
+
+      - name: Generate checksums, release manifest, and test summary
+        shell: pwsh
+        run: |
+          @"
+          # LunaScope release validation
+
+          Commit: ${{ github.sha }}
+          CI run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          Channel: ${{ steps.release-meta.outputs.channel }}
+          Artifact label: ${{ steps.release-meta.outputs.artifact_label }}
+          Signed: ${{ steps.release-meta.outputs.signed }}
+          CI evidence artifact: test-summary-${{ github.sha }} (includes deterministic Tier 1 evidence)
+          Checksums: SHA256SUMS.txt
+          Machine-readable provenance: release-manifest.json
+
+          The reusable full CI workflow completed before this production build.
+          "@ | Set-Content -LiteralPath artifacts\TEST_SUMMARY.md -Encoding utf8
+          $payloadFiles = Get-ChildItem -LiteralPath artifacts -File |
+            Where-Object { $_.Name -notin @("SHA256SUMS.txt", "release-manifest.json") } |
+            Sort-Object Name
+          $checksums = foreach ($file in $payloadFiles) {
+            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          $checksums | Set-Content -LiteralPath artifacts\SHA256SUMS.txt -Encoding ascii
+          $manifestFiles = foreach ($file in (Get-ChildItem -LiteralPath artifacts -File |
+            Where-Object { $_.Name -ne "release-manifest.json" } |
+            Sort-Object Name)) {
+            [ordered]@{
+              name = $file.Name
+              size = $file.Length
+              sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+          }
+          [ordered]@{
+            schemaVersion = 1
+            tag = "${{ github.ref_name }}"
+            commit = "${{ github.sha }}"
+            channel = "${{ steps.release-meta.outputs.channel }}"
+            artifactLabel = "${{ steps.release-meta.outputs.artifact_label }}"
+            signed = [bool]::Parse("${{ steps.release-meta.outputs.signed }}")
+            sourceRun = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            ciEvidenceArtifact = "test-summary-${{ github.sha }}"
+            manifestSelfHashPolicy = "release-manifest.json is excluded to avoid a recursive self-hash"
+            files = $manifestFiles
+          } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath artifacts\release-manifest.json -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LunaScope-${{ github.ref_name }}-${{ steps.release-meta.outputs.artifact_label }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  stable-release-gate:
+    needs: build-windows
+    if: needs.build-windows.outputs.channel == 'stable'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enforce project license and Windows signing gates
+        shell: pwsh
+        run: |
+          $output = & node scripts/release-gate.mjs --root . --channel stable --signing-available ${{ needs.build-windows.outputs.signed }} --repository "${{ github.repository }}"
+          if ($LASTEXITCODE -ne 0) {
+            $output
+            throw "Stable release gate not satisfied."
+          }
+          $gate = $output | ConvertFrom-Json
+          if ([string]::IsNullOrWhiteSpace($gate.evidenceCommit)) {
+            throw "Stable evidence does not identify one reviewed source commit."
+          }
+          & git merge-base --is-ancestor $gate.evidenceCommit "${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Stable evidence commit is not an ancestor of the release commit."
+          }
+
+  publish-rc:
+    needs: build-windows
+    if: startsWith(github.ref, 'refs/tags/') && needs.build-windows.outputs.channel == 'rc'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: LunaScope-${{ github.ref_name }}-${{ needs.build-windows.outputs.artifact_label }}
+          path: artifacts
+      - name: Publish or update prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if (gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" *> $null) {
+            gh release upload "${{ github.ref_name }}" artifacts\* --clobber --repo "${{ github.repository }}"
+          } else {
+            gh release create "${{ github.ref_name }}" artifacts\* --verify-tag --prerelease --generate-notes --repo "${{ github.repository }}"
+          }
+
+  publish-stable:
+    needs: [build-windows, stable-release-gate]
+    if: startsWith(github.ref, 'refs/tags/') && needs.build-windows.outputs.channel == 'stable'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: LunaScope-${{ github.ref_name }}-${{ needs.build-windows.outputs.artifact_label }}
+          path: artifacts
+      - name: Publish or update stable release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if (gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" *> $null) {
+            gh release upload "${{ github.ref_name }}" artifacts\* --clobber --repo "${{ github.repository }}"
+          } else {
+            gh release create "${{ github.ref_name }}" artifacts\* --verify-tag --generate-notes --repo "${{ github.repository }}"
+          }

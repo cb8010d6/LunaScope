@@ -1,0 +1,49 @@
+name: Release Canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_paid_run:
+        description: Confirm this workflow uses a paid live Provider and may run for a long time
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  live-canary:
+    if: inputs.confirm_paid_run
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      RELEASE_CANARY_DEEPSEEK_API_KEY: ${{ secrets.RELEASE_CANARY_DEEPSEEK_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+
+      - name: Require secret-enabled workflow
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RELEASE_CANARY_DEEPSEEK_API_KEY)) {
+            throw "RELEASE_CANARY_DEEPSEEK_API_KEY is not configured. No canary was run."
+          }
+
+      - name: Run representative live Provider canaries
+        run: npm run evals:canary
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-canary-evidence-${{ github.run_id }}
+          path: artifacts/canary/latest.json
+          if-no-files-found: warn

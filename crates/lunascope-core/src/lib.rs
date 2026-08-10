@@ -2,6 +2,7 @@ mod agent_session;
 mod attachment;
 mod conversation;
 mod course;
+mod diagnostic;
 mod domain;
 mod event;
 mod extension;
@@ -17,6 +18,7 @@ pub use agent_session::*;
 pub use attachment::*;
 pub use conversation::*;
 pub use course::*;
+pub use diagnostic::*;
 pub use domain::*;
 pub use event::*;
 pub use extension::*;
@@ -58,6 +60,9 @@ pub fn typescript_contract() -> String {
         WorkerState::decl(&config),
         RiskLevel::decl(&config),
         RedactionState::decl(&config),
+        DiagnosticCode::decl(&config),
+        DiagnosticSeverity::decl(&config),
+        ActionableDiagnostic::decl(&config),
         EventSource::decl(&config),
         VerificationStatus::decl(&config),
         CompletionKind::decl(&config),

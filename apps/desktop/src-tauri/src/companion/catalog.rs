@@ -662,7 +662,7 @@ fn append_catalog_chunk_with_limit(
 }
 
 fn catalog_size_error(limit: usize) -> String {
-    if limit % (1024 * 1024) == 0 {
+    if limit.is_multiple_of(1024 * 1024) {
         format!(
             "Catalog response exceeds the {} MiB limit.",
             limit / (1024 * 1024)

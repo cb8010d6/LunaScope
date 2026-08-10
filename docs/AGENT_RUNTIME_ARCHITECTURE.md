@@ -38,13 +38,19 @@ The desktop projection converts those settled facts into two presentation layers
 
 Narrative text is deterministic UI prose over runtime events. It is not model chain-of-thought. Raw character-count stream updates are intentionally omitted.
 
+## Restart and side-effect reconciliation
+
+Recovery reads committed `ToolCallRequested`/completion events before changing the run projection. For bounded file operations whose exact result can be proven from the latest Worker worktree, LunaScope records the reconciled completion without executing the side effect again. A deterministic failure-injection test covers the sequence “intent committed → write happened → crash before completion → SQLite reopen → reconcile without replay.”
+
+Tools whose external mutation cannot be proven, including an interrupted generic patch or process, enter `RECOVERY_NEEDS_INTERVENTION`. Automatic retry is rejected until a user inspects the preserved workspace and starts an explicit repair. Ambiguity never becomes a blind replay.
+
 ## Remaining migration
 
-The next reliability stages are deliberately separated from the current runnable slice:
+The remaining reliability work is deliberately bounded:
 
-1. Project settled model/tool items into a resumable per-Worker conversation journal.
-2. Reconcile an unfinished mutating call on restart from its idempotency key and observed workspace state before deciding whether it is safe to retry.
-3. Replace deterministic old-turn pruning with a persisted semantic checkpoint when the active Provider approaches its token limit.
-4. Move Worker step scheduling out of the desktop adapter and into a runtime-owned turn engine so CLI, desktop, and future headless hosts share one execution contract.
+1. Expand exact state reconciliation only for tools whose real effect can be proven without replay; all other mutating tools retain the `NeedsIntervention` fallback.
+2. Replace deterministic old-turn pruning with a persisted semantic checkpoint when the active Provider approaches its token limit.
+3. Move Worker step scheduling out of the desktop adapter and into a runtime-owned turn engine so CLI, desktop, and future headless hosts share one execution contract.
+4. Produce reviewed multi-hour endurance and secret-enabled Provider-canary evidence before a Stable release.
 
-No UI or retry policy may claim these remaining stages are implemented until recovery tests prove them across an unclean process exit.
+No UI, eval manifest, or release note may claim a remaining stage has passed without its deterministic or release evidence.

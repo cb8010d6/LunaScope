@@ -1,3 +1,4 @@
+import "../pixi-csp.js";
 var __pow = Math.pow;
 var __async = (__this, __arguments, generator) => {
   return new Promise((resolve, reject) => {

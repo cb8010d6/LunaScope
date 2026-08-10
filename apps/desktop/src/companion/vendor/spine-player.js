@@ -1,9 +1,12 @@
+import { installPixiCspCompatibility } from "./pixi-csp.js";
 import * as PIXI from "pixi.js";
 import { Spine } from "pixi-spine";
 import { animationForState, stateMachine } from "./state.js";
 import { spineAssetUrl } from "./asset-url.js";
 import { calculateInteractiveBounds, compactPointerRegions, expandBounds, normalizePointerRegions, transformLocalBounds, unionPointerRegions } from "./hitbox.js";
 import { acquireSpineAsset } from "./spine-asset-handle.js";
+
+installPixiCspCompatibility();
 
 const ACTIVE_BOUNDS_STATES = new Set(["working", "running", "reviewing", "success", "reminder", "failed"]);
 const TRACK_STALE_MS = 3000;

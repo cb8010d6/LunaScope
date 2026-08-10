@@ -1,12 +1,22 @@
 # LunaScope
 
-**The Moonwatcher Project / 望月者计划**
+LunaScope is a Windows-first local AI agent workbench that turns complex tasks into observable, permission-bounded, independently verified runs on your files.
 
-Windows-first local agent workbench for long-running, observable, multi-model work.
+[简体中文](README.zh-CN.md) · [Download 0.3.1](https://github.com/LagrangeNSS/LunaScope/releases/tag/v0.3.1) · [5-minute Quickstart](docs/QUICKSTART.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Security](SECURITY.md)
 
-[简体中文](README.zh-CN.md) · [Download 0.3.1](https://github.com/LagrangeNSS/LunaScope/releases/tag/v0.3.1) · [Architecture](docs/AGENT_RUNTIME_ARCHITECTURE.md) · [Security model](docs/THREAT_MODEL.md) · [Third-party notices](docs/THIRD_PARTY_NOTICES.md)
+Three core promises:
 
-LunaScope is built for the part after a model says “I can do that.” It turns a conversation into a durable run, gives the model bounded native tools, decomposes complex work into reviewable Workers, keeps file effects and evidence visible, and continues through verification and targeted repair. Version 0.3.1 is a public engineering preview: it is a runnable Windows desktop application with a Rust execution core, not a finished commercial release.
+- **Plan and execute** — turn a request into a durable, dependency-aware Agent graph.
+- **See every important action** — keep tools, file changes, permissions, retries, and evidence visible.
+- **Independently verify the result** — isolate Worker changes and require a separate verification record before completion.
+
+## Download and 3-step Quickstart
+
+1. Download the installer or portable executable and verify `SHA256SUMS.txt`.
+2. **Configure a Provider** in Settings, then choose a project folder and start a task.
+3. **Choose Folder**, create a project workspace, and start a task.
+
+See [Quickstart](docs/QUICKSTART.md) for Git/WebView2 prerequisites and [Installation, upgrade, and uninstall](docs/INSTALLATION.md) for data locations. Version 0.3.1 remains a public engineering preview while RC hardening is in progress. The project has no final distribution license and public binaries are unsigned; those are explicit Stable release gates.
 
 ## Release 0.3.1
 
@@ -135,7 +145,7 @@ When the selected primary model cannot inspect an image, LunaScope can route bou
 
 Credentials are referenced by ID and resolved through Windows Credential Manager. Secret values are not stored in project JSON, events, logs, README files, or the WebView.
 
-## UltraNote
+## Optional workflow: UltraNote
 
 UltraNote is LunaScope’s course and document learning workflow. It is not a separate model mode. In a general project, `/ultranote` activates it for the current request. When a project is created as an UltraNote project, every conversation automatically receives the same persisted course context without requiring the command.
 
@@ -191,6 +201,8 @@ Imported content is treated as untrusted source data, not as a higher-priority i
 For visual-note requests, an Agent can create an offline interactive HTML page with local assets, responsive layout, diagrams, formulas, and task-appropriate controls. Browser acceptance runs against a bounded temporary copy with network access closed by default. UltraNote PDF export converts note Markdown into a local print document, renders bundled Mermaid and KaTeX/MathML assets, waits for rendering, and asks installed Microsoft Edge to print the final PDF without headers or footers.
 
 This pipeline intentionally keeps both the source Markdown and generated HTML available when PDF rendering cannot complete. PDF output therefore depends on a supported Windows installation with Microsoft Edge.
+
+The Desktop Companion is also optional and independent of the Agent execution core; its implementation and asset-license boundaries are documented in [docs/COMPANION_MODULE.md](docs/COMPANION_MODULE.md).
 
 ## Tools, permissions, Skills and MCP
 
@@ -259,9 +271,9 @@ npm run tauri -- build
 
 The installer is generated at `target/release/bundle/nsis/LunaScope_0.3.1_x64-setup.exe`.
 
-## 0.3.1 verification record
+## Continuous validation and release gates
 
-The release was built from the public source snapshot with these local gates passing:
+Pull requests and `main` are validated by GitHub Actions with:
 
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
@@ -270,11 +282,17 @@ The release was built from the public source snapshot with these local gates pas
 - `npm run typecheck`
 - `npm run contract:check`
 - `npm run test:companion-assets`
-- `npm run evals:check`
+- `npm run test:pixi-runtime`
+- `npm run test:tauri-csp`
+- `npm run test:environment-preflight`
+- `npm run evals:manifest-check`
+- `npm run evals:tier1`
+- `npm run release:gate:test`
+- `npm run test:release-evidence-redaction`
 - `npm run build`
-- `npm run tauri -- build`
+- `npm audit --omit=dev`
 
-The deterministic Rust suite passed with no failures. Tests that require paid Provider credentials, explicit user fixture paths, live network access, or a persistent external workspace remain ignored by default. `evals/manifest.json` defines twelve evidence contracts and deliberately reports `defined_not_run`; it is not presented as a fabricated live-evaluation result.
+`evals/manifest.json` defines twelve evidence contracts and deliberately reports `defined_not_run`; `evals:manifest-check` is schema validation, not a live eval. Tier 1 uses local deterministic fixtures without paid credentials. Stable additionally requires a root `LICENSE`, authentic Windows signing, recent same-commit GitHub canary evidence, and at least two hours of reviewed endurance evidence. None of those external gates is fabricated by CI.
 
 ## Security, privacy and current limits
 
@@ -311,6 +329,6 @@ HarmonyOS Sans is used under its bundled license terms. Complete revisions, prov
 
 ## Contributing
 
-Start with the Rust contract boundary, architecture decisions, risk register, and threat model. Changes that weaken credential isolation, tool ordering, durable event semantics, path scope, permission checks, worktree isolation, or independent verification are security-sensitive architecture changes, not ordinary UI refactors.
+Start with [CONTRIBUTING.md](CONTRIBUTING.md), the Rust contract boundary, architecture decisions, risk register, and threat model. Changes that weaken credential isolation, tool ordering, durable event semantics, path scope, permission checks, worktree isolation, or independent verification are security-sensitive architecture changes, not ordinary UI refactors.
 
 The repository is public so the implementation can be reviewed and the 0.3.1 Windows build can be reproduced. Project licensing, code signing, and the remaining long-duration release gates are intentionally still explicit work items rather than hidden behind a maturity claim.

@@ -248,7 +248,14 @@ async fn approved_patch_runs_tests_and_persists_verification_evidence() {
         &executor,
         &root_text,
         "powershell.exe",
-        &["-NoProfile", "-NonInteractive", "-File", "test.ps1"],
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "test.ps1",
+        ],
     )
     .await;
     let diff_check = execute(&executor, &root_text, "git.exe", &["diff", "--check"]).await;

@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Windows validation
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt,clippy
+          rustup default 1.95.0
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-registry-${{ runner.os }}-
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Rust format
+        run: cargo fmt --all -- --check
+
+      - name: Rust Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Rust check
+        run: cargo check --workspace
+
+      - name: Rust tests
+        run: cargo test --workspace
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Runtime contract check
+        run: npm run contract:check
+
+      - name: Companion asset tests
+        run: npm run test:companion-assets
+
+      - name: Pixi runtime CSP compatibility tests
+        run: npm run test:pixi-runtime
+
+      - name: Tauri Companion CSP scope test
+        run: npm run test:tauri-csp
+
+      - name: Task-aware environment preflight tests
+        run: npm run test:environment-preflight
+
+      - name: Eval manifest schema check
+        run: npm run evals:manifest-check
+
+      - name: Eval manifest anti-fabrication tests
+        run: npm run evals:manifest-test
+
+      - name: Deterministic Tier 1 evals
+        run: npm run evals:tier1
+
+      - name: Release gate tests
+        run: npm run release:gate:test
+
+      - name: Release evidence redaction tests
+        run: npm run test:release-evidence-redaction
+
+      - name: Frontend production build
+        run: npm run build
+
+      - name: Production dependency audit
+        run: npm audit --omit=dev
+
+      - name: Write test summary
+        shell: pwsh
+        run: |
+          @"
+          # LunaScope CI validation
+
+          Commit: ${{ github.sha }}
+          Runner: ${{ runner.os }}
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          All required Rust, TypeScript, contract, deterministic asset,
+          release-gate, build, and production audit steps completed successfully.
+          "@ | Set-Content -LiteralPath TEST_SUMMARY.md -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-summary-${{ github.sha }}
+          path: |
+            TEST_SUMMARY.md
+            artifacts/evals/tier1.json
+          if-no-files-found: error

@@ -1,3 +1,4 @@
+import "./pixi-csp.js";
 import * as PIXI from "pixi.js";
 import { joinSpineAssetUrl, spineAssetDirectoryUrl } from "./asset-url.js";
 

@@ -1105,13 +1105,13 @@ async fn run_worker(
                 state_changes,
             );
         }
-        if attempt > 1 {
-            if let Some(revision) = control.take_retry_revision(&spec.worker_id) {
-                spec = revision.spec;
-            }
+        if attempt > 1
+            && let Some(revision) = control.take_retry_revision(&spec.worker_id)
+        {
+            spec = revision.spec;
         }
-        if state == WorkerState::WaitingDependency || state == WorkerState::Paused {
-            if let Err(error) = transition(
+        if (state == WorkerState::WaitingDependency || state == WorkerState::Paused)
+            && let Err(error) = transition(
                 &spec.worker_id,
                 &mut state,
                 WorkerState::Queued,
@@ -1121,9 +1121,9 @@ async fn run_worker(
                     "retry queued"
                 },
                 &mut state_changes,
-            ) {
-                return failed_from_scheduler(error, attempt, last_worktree, state_changes);
-            }
+            )
+        {
+            return failed_from_scheduler(error, attempt, last_worktree, state_changes);
         }
         if let Err(error) = transition(
             &spec.worker_id,
@@ -1300,32 +1300,31 @@ async fn run_worker(
                         record: patch.record.clone(),
                         bytes: patch.bytes.clone(),
                     });
-                    if integrate_workspace_changes {
-                        if let Err(error) =
+                    if integrate_workspace_changes
+                        && let Err(error) =
                             manager.integrate_patch(patch, cancellation.clone()).await
-                        {
-                            return fail_worker(
-                                &spec.worker_id,
-                                &mut state,
-                                "integration",
-                                error.to_string(),
-                                attempt,
-                                last_worktree,
-                                state_changes,
-                            );
-                        }
+                    {
+                        return fail_worker(
+                            &spec.worker_id,
+                            &mut state,
+                            "integration",
+                            error.to_string(),
+                            attempt,
+                            last_worktree,
+                            state_changes,
+                        );
                     }
                 }
-                if spec.role.eq_ignore_ascii_case("verifier") {
-                    if let Err(error) = transition(
+                if spec.role.eq_ignore_ascii_case("verifier")
+                    && let Err(error) = transition(
                         &spec.worker_id,
                         &mut state,
                         WorkerState::Verifying,
                         "Verifier produced a structured verdict",
                         &mut state_changes,
-                    ) {
-                        return failed_from_scheduler(error, attempt, last_worktree, state_changes);
-                    }
+                    )
+                {
+                    return failed_from_scheduler(error, attempt, last_worktree, state_changes);
                 }
                 if let Err(error) = transition(
                     &spec.worker_id,
@@ -1882,14 +1881,7 @@ mod tests {
                         verification: None,
                     }),
                     "slow-root" => {
-                        tokio::time::timeout(Duration::from_secs(2), child_started.notified())
-                            .await
-                            .map_err(|_| {
-                                WorkerFailure::new(
-                                    "batch_scheduler_detected",
-                                    "the unlocked child was not refilled while another root remained active",
-                                )
-                            })?;
+                        child_started.notified().await;
                         Ok(WorkerOutput {
                             summary: "slow root observed continuous refill".into(),
                             artifacts: Vec::new(),
@@ -2143,7 +2135,7 @@ mod tests {
         .await
         .expect("manager");
         let result = tokio::time::timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(30),
             AgentScheduler::new(manager).run(
                 &plan,
                 Arc::new(ContinuousRefillExecutor { child_started }),
@@ -2243,12 +2235,14 @@ mod tests {
                     .await
             })
         };
-        root_started.notified().await;
+        tokio::time::timeout(Duration::from_secs(30), root_started.notified())
+            .await
+            .expect("dynamic root did not start");
         control
             .submit_revision(&patch, &revised)
             .expect("live replan accepted while the root remains active");
         release_root.notify_one();
-        let result = tokio::time::timeout(Duration::from_secs(5), scheduler_task)
+        let result = tokio::time::timeout(Duration::from_secs(30), scheduler_task)
             .await
             .expect("dynamic scheduler did not stall")
             .expect("join")

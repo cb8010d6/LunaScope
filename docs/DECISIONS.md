@@ -56,8 +56,8 @@ Decisions are append-only. Superseded decisions remain visible and point to thei
 
 - Status: Accepted
 - Date: 2026-07-27
-- Decision: Default large/user data root is `D:\LunaScopeData` when available. If unavailable, first launch requires explicit directory selection. Development fixtures stay small and repository-local.
-- Consequence: C: is not polluted with models, course files, or large caches.
+- Decision: `DataPaths` is the single source of truth. Resolution order is a saved valid absolute root, an existing legacy root detected by the migration probe, then the Windows per-user local application-data directory. A saved/legacy root that becomes unavailable opens a per-user recovery root without replacing the saved choice. Recovery mode allows only diagnosis, directory replacement, restart, and read-only preference loading; other application commands fail closed. Legacy data is referenced in place and is never copied automatically.
+- Consequence: A machine without `D:` can start normally. Large data may use the Windows per-user default until the user relocates it. Every state, extension, Companion, preload/runtime, and worktree directory derives from the same root. Tauri's static asset scope is empty; setup dynamically grants only the three Companion asset directories.
 
 ## D-0009 - SQLite write concurrency
 
@@ -196,7 +196,7 @@ Decisions are append-only. Superseded decisions remain visible and point to thei
 
 - Status: Accepted
 - Date: 2026-07-28
-- Decision: Skills, Tools, and MCP use the fixed `D:\LunaScopeData\extensions` root. System Skills and user Skills are discovered from separate `skills\system` and `skills\user` directories; neither is discovered from a project workspace.
+- Decision: Skills, Tools, and MCP use `<data-root>/extensions` from `DataPaths`. System Skills and user Skills are discovered from separate `skills\system` and `skills\user` directories; neither is discovered from a project workspace.
 - Consequence: Switching projects cannot silently change executable capability discovery. Project workspaces remain task context and file scope, not extension installation roots.
 
 ## D-0029 - Multiple Providers coexist by stable configuration ID

@@ -177,10 +177,10 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "Allows the LunaScope main window to use the registered application commands.\n#### This permission set includes:\n\n- `allow-create-run`\n- `allow-delete-conversation`\n- `allow-get-runtime-snapshot`\n- `allow-subscribe-run`\n- `allow-list-provider-configs`\n- `allow-save-provider-config`\n- `allow-delete-provider-credential`\n- `allow-test-provider-connection`\n- `allow-test-model-reasoning-config`\n- `allow-get-routing-policy`\n- `allow-save-routing-policy`\n- `allow-parse-model-preference`\n- `allow-get-model-selection-settings`\n- `allow-save-model-selection-settings`\n- `allow-extension-directories`\n- `allow-discover-skills`\n- `allow-load-skill`\n- `allow-list-mcp-server-configs`\n- `allow-save-mcp-server-config`\n- `allow-delete-mcp-server-config`\n- `allow-delete-mcp-credential`\n- `allow-test-mcp-server`\n- `allow-invoke-mcp-tool`\n- `allow-preview-github-import`\n- `allow-install-github-import`\n- `allow-list-installed-imports`\n- `allow-rollback-github-import`\n- `allow-compare-github-import`\n- `allow-import-attachments`\n- `allow-remove-imported-attachment`\n- `allow-companion-get-settings`\n- `allow-companion-save-preferences`\n- `allow-companion-import-model`\n- `allow-companion-set-activity`\n- `allow-companion-report-renderer-status`\n- `allow-companion-avatar-requirements`\n- `allow-companion-list-avatar-packs`\n- `allow-companion-create-avatar-pack`\n- `allow-companion-duplicate-avatar-pack`\n- `allow-companion-delete-avatar-pack`\n- `allow-companion-repack-avatar-pack`\n- `allow-companion-load-avatar-manifest`\n- `allow-companion-save-avatar-manifest`\n- `allow-companion-validate-avatar-pack`\n- `allow-companion-register-avatar-pack`\n- `allow-companion-install-avatar-pack`\n- `allow-companion-import-avatar-layers`\n- `allow-companion-read-avatar-asset`\n- `allow-companion-search-catalog`\n- `allow-companion-list-installed-models`\n- `allow-companion-preload-catalog-models`\n- `allow-companion-install-catalog-model`\n- `allow-companion-activate-installed-model`\n- `allow-companion-remove-installed-model`\n- `allow-draft-native-orchestration`\n- `allow-list-conversation-threads`\n- `allow-list-conversation-messages`\n- `allow-list-domain-packs`\n- `allow-patch-native-orchestration`\n- `allow-run-native-orchestration`\n- `allow-read-orchestration-change-set`\n- `allow-recover-native-orchestration-view`\n- `allow-retry-failed-native-orchestration`\n- `allow-guide-native-orchestration`\n- `allow-set-native-orchestration-paused`\n- `allow-cancel-native-orchestration`\n- `allow-list-courses`\n- `allow-create-course`\n- `allow-bind-course-thread`\n- `allow-activate-ultranote`\n- `allow-search-ultranote`\n- `allow-ingest-syllabus`\n- `allow-ingest-lecture`\n- `allow-evaluate-homework`\n- `allow-export-ultranote`\n- `allow-list-projects`\n- `allow-save-project`\n- `allow-delete-project`\n- `allow-get-user-preferences`\n- `allow-save-user-preferences`\n- `allow-read-project-file`\n- `allow-create-project-file`\n- `allow-patch-project-file`\n- `allow-route-tools`\n- `allow-default-workspace-root`",
+          "description": "Allows the LunaScope main window to use the registered application commands.\n#### This permission set includes:\n\n- `allow-create-run`\n- `allow-delete-conversation`\n- `allow-get-runtime-snapshot`\n- `allow-subscribe-run`\n- `allow-list-provider-configs`\n- `allow-save-provider-config`\n- `allow-delete-provider-credential`\n- `allow-test-provider-connection`\n- `allow-test-model-reasoning-config`\n- `allow-get-routing-policy`\n- `allow-save-routing-policy`\n- `allow-parse-model-preference`\n- `allow-get-model-selection-settings`\n- `allow-save-model-selection-settings`\n- `allow-extension-directories`\n- `allow-discover-skills`\n- `allow-load-skill`\n- `allow-list-mcp-server-configs`\n- `allow-save-mcp-server-config`\n- `allow-delete-mcp-server-config`\n- `allow-delete-mcp-credential`\n- `allow-test-mcp-server`\n- `allow-invoke-mcp-tool`\n- `allow-preview-github-import`\n- `allow-install-github-import`\n- `allow-list-installed-imports`\n- `allow-rollback-github-import`\n- `allow-compare-github-import`\n- `allow-import-attachments`\n- `allow-remove-imported-attachment`\n- `allow-companion-get-settings`\n- `allow-companion-save-preferences`\n- `allow-companion-import-model`\n- `allow-companion-set-activity`\n- `allow-companion-report-renderer-status`\n- `allow-companion-avatar-requirements`\n- `allow-companion-list-avatar-packs`\n- `allow-companion-create-avatar-pack`\n- `allow-companion-duplicate-avatar-pack`\n- `allow-companion-delete-avatar-pack`\n- `allow-companion-repack-avatar-pack`\n- `allow-companion-load-avatar-manifest`\n- `allow-companion-save-avatar-manifest`\n- `allow-companion-validate-avatar-pack`\n- `allow-companion-register-avatar-pack`\n- `allow-companion-install-avatar-pack`\n- `allow-companion-import-avatar-layers`\n- `allow-companion-read-avatar-asset`\n- `allow-companion-search-catalog`\n- `allow-companion-list-installed-models`\n- `allow-companion-preload-catalog-models`\n- `allow-companion-install-catalog-model`\n- `allow-companion-activate-installed-model`\n- `allow-companion-remove-installed-model`\n- `allow-draft-native-orchestration`\n- `allow-list-conversation-threads`\n- `allow-list-conversation-messages`\n- `allow-list-domain-packs`\n- `allow-patch-native-orchestration`\n- `allow-run-native-orchestration`\n- `allow-read-orchestration-change-set`\n- `allow-recover-native-orchestration-view`\n- `allow-retry-failed-native-orchestration`\n- `allow-guide-native-orchestration`\n- `allow-set-native-orchestration-paused`\n- `allow-cancel-native-orchestration`\n- `allow-list-courses`\n- `allow-create-course`\n- `allow-bind-course-thread`\n- `allow-activate-ultranote`\n- `allow-search-ultranote`\n- `allow-ingest-syllabus`\n- `allow-ingest-lecture`\n- `allow-evaluate-homework`\n- `allow-export-ultranote`\n- `allow-list-projects`\n- `allow-save-project`\n- `allow-delete-project`\n- `allow-get-user-preferences`\n- `allow-save-user-preferences`\n- `allow-read-project-file`\n- `allow-create-project-file`\n- `allow-patch-project-file`\n- `allow-route-tools`\n- `allow-default-workspace-root`\n- `allow-environment-preflight`\n- `allow-diagnose-error`\n- `allow-redact-diagnostics`\n- `allow-configure-data-root`\n- `allow-restart-application`",
           "type": "string",
           "const": "main-app-commands",
-          "markdownDescription": "Allows the LunaScope main window to use the registered application commands.\n#### This permission set includes:\n\n- `allow-create-run`\n- `allow-delete-conversation`\n- `allow-get-runtime-snapshot`\n- `allow-subscribe-run`\n- `allow-list-provider-configs`\n- `allow-save-provider-config`\n- `allow-delete-provider-credential`\n- `allow-test-provider-connection`\n- `allow-test-model-reasoning-config`\n- `allow-get-routing-policy`\n- `allow-save-routing-policy`\n- `allow-parse-model-preference`\n- `allow-get-model-selection-settings`\n- `allow-save-model-selection-settings`\n- `allow-extension-directories`\n- `allow-discover-skills`\n- `allow-load-skill`\n- `allow-list-mcp-server-configs`\n- `allow-save-mcp-server-config`\n- `allow-delete-mcp-server-config`\n- `allow-delete-mcp-credential`\n- `allow-test-mcp-server`\n- `allow-invoke-mcp-tool`\n- `allow-preview-github-import`\n- `allow-install-github-import`\n- `allow-list-installed-imports`\n- `allow-rollback-github-import`\n- `allow-compare-github-import`\n- `allow-import-attachments`\n- `allow-remove-imported-attachment`\n- `allow-companion-get-settings`\n- `allow-companion-save-preferences`\n- `allow-companion-import-model`\n- `allow-companion-set-activity`\n- `allow-companion-report-renderer-status`\n- `allow-companion-avatar-requirements`\n- `allow-companion-list-avatar-packs`\n- `allow-companion-create-avatar-pack`\n- `allow-companion-duplicate-avatar-pack`\n- `allow-companion-delete-avatar-pack`\n- `allow-companion-repack-avatar-pack`\n- `allow-companion-load-avatar-manifest`\n- `allow-companion-save-avatar-manifest`\n- `allow-companion-validate-avatar-pack`\n- `allow-companion-register-avatar-pack`\n- `allow-companion-install-avatar-pack`\n- `allow-companion-import-avatar-layers`\n- `allow-companion-read-avatar-asset`\n- `allow-companion-search-catalog`\n- `allow-companion-list-installed-models`\n- `allow-companion-preload-catalog-models`\n- `allow-companion-install-catalog-model`\n- `allow-companion-activate-installed-model`\n- `allow-companion-remove-installed-model`\n- `allow-draft-native-orchestration`\n- `allow-list-conversation-threads`\n- `allow-list-conversation-messages`\n- `allow-list-domain-packs`\n- `allow-patch-native-orchestration`\n- `allow-run-native-orchestration`\n- `allow-read-orchestration-change-set`\n- `allow-recover-native-orchestration-view`\n- `allow-retry-failed-native-orchestration`\n- `allow-guide-native-orchestration`\n- `allow-set-native-orchestration-paused`\n- `allow-cancel-native-orchestration`\n- `allow-list-courses`\n- `allow-create-course`\n- `allow-bind-course-thread`\n- `allow-activate-ultranote`\n- `allow-search-ultranote`\n- `allow-ingest-syllabus`\n- `allow-ingest-lecture`\n- `allow-evaluate-homework`\n- `allow-export-ultranote`\n- `allow-list-projects`\n- `allow-save-project`\n- `allow-delete-project`\n- `allow-get-user-preferences`\n- `allow-save-user-preferences`\n- `allow-read-project-file`\n- `allow-create-project-file`\n- `allow-patch-project-file`\n- `allow-route-tools`\n- `allow-default-workspace-root`"
+          "markdownDescription": "Allows the LunaScope main window to use the registered application commands.\n#### This permission set includes:\n\n- `allow-create-run`\n- `allow-delete-conversation`\n- `allow-get-runtime-snapshot`\n- `allow-subscribe-run`\n- `allow-list-provider-configs`\n- `allow-save-provider-config`\n- `allow-delete-provider-credential`\n- `allow-test-provider-connection`\n- `allow-test-model-reasoning-config`\n- `allow-get-routing-policy`\n- `allow-save-routing-policy`\n- `allow-parse-model-preference`\n- `allow-get-model-selection-settings`\n- `allow-save-model-selection-settings`\n- `allow-extension-directories`\n- `allow-discover-skills`\n- `allow-load-skill`\n- `allow-list-mcp-server-configs`\n- `allow-save-mcp-server-config`\n- `allow-delete-mcp-server-config`\n- `allow-delete-mcp-credential`\n- `allow-test-mcp-server`\n- `allow-invoke-mcp-tool`\n- `allow-preview-github-import`\n- `allow-install-github-import`\n- `allow-list-installed-imports`\n- `allow-rollback-github-import`\n- `allow-compare-github-import`\n- `allow-import-attachments`\n- `allow-remove-imported-attachment`\n- `allow-companion-get-settings`\n- `allow-companion-save-preferences`\n- `allow-companion-import-model`\n- `allow-companion-set-activity`\n- `allow-companion-report-renderer-status`\n- `allow-companion-avatar-requirements`\n- `allow-companion-list-avatar-packs`\n- `allow-companion-create-avatar-pack`\n- `allow-companion-duplicate-avatar-pack`\n- `allow-companion-delete-avatar-pack`\n- `allow-companion-repack-avatar-pack`\n- `allow-companion-load-avatar-manifest`\n- `allow-companion-save-avatar-manifest`\n- `allow-companion-validate-avatar-pack`\n- `allow-companion-register-avatar-pack`\n- `allow-companion-install-avatar-pack`\n- `allow-companion-import-avatar-layers`\n- `allow-companion-read-avatar-asset`\n- `allow-companion-search-catalog`\n- `allow-companion-list-installed-models`\n- `allow-companion-preload-catalog-models`\n- `allow-companion-install-catalog-model`\n- `allow-companion-activate-installed-model`\n- `allow-companion-remove-installed-model`\n- `allow-draft-native-orchestration`\n- `allow-list-conversation-threads`\n- `allow-list-conversation-messages`\n- `allow-list-domain-packs`\n- `allow-patch-native-orchestration`\n- `allow-run-native-orchestration`\n- `allow-read-orchestration-change-set`\n- `allow-recover-native-orchestration-view`\n- `allow-retry-failed-native-orchestration`\n- `allow-guide-native-orchestration`\n- `allow-set-native-orchestration-paused`\n- `allow-cancel-native-orchestration`\n- `allow-list-courses`\n- `allow-create-course`\n- `allow-bind-course-thread`\n- `allow-activate-ultranote`\n- `allow-search-ultranote`\n- `allow-ingest-syllabus`\n- `allow-ingest-lecture`\n- `allow-evaluate-homework`\n- `allow-export-ultranote`\n- `allow-list-projects`\n- `allow-save-project`\n- `allow-delete-project`\n- `allow-get-user-preferences`\n- `allow-save-user-preferences`\n- `allow-read-project-file`\n- `allow-create-project-file`\n- `allow-patch-project-file`\n- `allow-route-tools`\n- `allow-default-workspace-root`\n- `allow-environment-preflight`\n- `allow-diagnose-error`\n- `allow-redact-diagnostics`\n- `allow-configure-data-root`\n- `allow-restart-application`"
         },
         {
           "description": "Enables the activate_ultranote command without any pre-configured scope.",
@@ -351,6 +351,12 @@
           "markdownDescription": "Enables the compare_github_import command without any pre-configured scope."
         },
         {
+          "description": "Enables the configure_data_root command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-configure-data-root",
+          "markdownDescription": "Enables the configure_data_root command without any pre-configured scope."
+        },
+        {
           "description": "Enables the create_course command without any pre-configured scope.",
           "type": "string",
           "const": "allow-create-course",
@@ -405,6 +411,12 @@
           "markdownDescription": "Enables the delete_provider_credential command without any pre-configured scope."
         },
         {
+          "description": "Enables the diagnose_error command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-diagnose-error",
+          "markdownDescription": "Enables the diagnose_error command without any pre-configured scope."
+        },
+        {
           "description": "Enables the discover_skills command without any pre-configured scope.",
           "type": "string",
           "const": "allow-discover-skills",
@@ -415,6 +427,12 @@
           "type": "string",
           "const": "allow-draft-native-orchestration",
           "markdownDescription": "Enables the draft_native_orchestration command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the environment_preflight command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-environment-preflight",
+          "markdownDescription": "Enables the environment_preflight command without any pre-configured scope."
         },
         {
           "description": "Enables the evaluate_homework command without any pre-configured scope.",
@@ -591,10 +609,22 @@
           "markdownDescription": "Enables the recover_native_orchestration_view command without any pre-configured scope."
         },
         {
+          "description": "Enables the redact_diagnostics command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-redact-diagnostics",
+          "markdownDescription": "Enables the redact_diagnostics command without any pre-configured scope."
+        },
+        {
           "description": "Enables the remove_imported_attachment command without any pre-configured scope.",
           "type": "string",
           "const": "allow-remove-imported-attachment",
           "markdownDescription": "Enables the remove_imported_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the restart_application command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-restart-application",
+          "markdownDescription": "Enables the restart_application command without any pre-configured scope."
         },
         {
           "description": "Enables the retry_failed_native_orchestration command without any pre-configured scope.",
@@ -861,6 +891,12 @@
           "markdownDescription": "Denies the compare_github_import command without any pre-configured scope."
         },
         {
+          "description": "Denies the configure_data_root command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-configure-data-root",
+          "markdownDescription": "Denies the configure_data_root command without any pre-configured scope."
+        },
+        {
           "description": "Denies the create_course command without any pre-configured scope.",
           "type": "string",
           "const": "deny-create-course",
@@ -915,6 +951,12 @@
           "markdownDescription": "Denies the delete_provider_credential command without any pre-configured scope."
         },
         {
+          "description": "Denies the diagnose_error command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-diagnose-error",
+          "markdownDescription": "Denies the diagnose_error command without any pre-configured scope."
+        },
+        {
           "description": "Denies the discover_skills command without any pre-configured scope.",
           "type": "string",
           "const": "deny-discover-skills",
@@ -925,6 +967,12 @@
           "type": "string",
           "const": "deny-draft-native-orchestration",
           "markdownDescription": "Denies the draft_native_orchestration command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the environment_preflight command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-environment-preflight",
+          "markdownDescription": "Denies the environment_preflight command without any pre-configured scope."
         },
         {
           "description": "Denies the evaluate_homework command without any pre-configured scope.",
@@ -1101,10 +1149,22 @@
           "markdownDescription": "Denies the recover_native_orchestration_view command without any pre-configured scope."
         },
         {
+          "description": "Denies the redact_diagnostics command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-redact-diagnostics",
+          "markdownDescription": "Denies the redact_diagnostics command without any pre-configured scope."
+        },
+        {
           "description": "Denies the remove_imported_attachment command without any pre-configured scope.",
           "type": "string",
           "const": "deny-remove-imported-attachment",
           "markdownDescription": "Denies the remove_imported_attachment command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the restart_application command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-restart-application",
+          "markdownDescription": "Denies the restart_application command without any pre-configured scope."
         },
         {
           "description": "Denies the retry_failed_native_orchestration command without any pre-configured scope.",

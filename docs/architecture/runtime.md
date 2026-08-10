@@ -28,15 +28,15 @@ lunascope-learning
 7. After commit, the desktop adapter sends an ordered delta through a Tauri channel.
 8. The frontend accepts only the next sequence; gaps trigger resubscription.
 
-Tool side effects use a two-event intent/result protocol and an idempotency key. Recovery reconciles committed intents without committed results before retrying.
+Tool side effects use a two-event intent/result protocol and an idempotency key. Recovery reconciles a committed intent only when the exact file effect is observable in the preserved Worker worktree. An ambiguous mutating intent becomes `RECOVERY_NEEDS_INTERVENTION` and is never automatically replayed.
 
 ## Recovery path
 
 1. Open SQLite with WAL and foreign keys enabled.
 2. Load the newest compatible snapshot for the run.
 3. Replay committed events after the snapshot sequence.
-4. Reconcile pending approvals, tool intents, and owned processes.
-5. Mark interrupted model streams for retry or partial completion.
+4. Reconcile provable pending tool intents; classify ambiguous mutations as requiring intervention.
+5. Mark interrupted model streams for retry or partial completion and reject automatic retry when side effects are uncertain.
 6. Publish a complete snapshot, followed by deltas after its sequence.
 
 Snapshots are acceleration artifacts. Deleting every snapshot must not lose committed state.
@@ -65,4 +65,3 @@ There is no `execute_any_command(string)` surface.
 - Rust generates the checked-in TypeScript declarations and JSON Schema.
 - CI fails when generated artifacts differ.
 - Additive readers tolerate known optional fields; incompatible changes require a migration and fixtures from the prior schema.
-

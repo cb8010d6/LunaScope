@@ -636,42 +636,62 @@ fn recover_orchestration_view(
         .map_err(|_| "orchestration control state is poisoned".to_owned())?
         .as_ref()
         .is_some_and(|active| &active.run_id == run_id);
+    let mut events = state.store.events_after(run_id, 0).map_err(display_error)?;
     if !snapshot.run_state.is_terminal()
         && snapshot.run_state != RunState::Created
         && !controller_present
     {
-        let scope = state
-            .store
-            .events_after(run_id, 0)
-            .map_err(display_error)?
-            .into_iter()
-            .next()
+        let scope = events
+            .first()
             .ok_or_else(|| "orchestration recovery event scope is unavailable".to_owned())?;
+        let reconciliation = snapshot
+            .orchestration_plan
+            .as_ref()
+            .map(|plan| reconcile_unfinished_tool_calls(&data_root()?, plan, &events))
+            .transpose()?
+            .unwrap_or_default();
+        let needs_intervention = !reconciliation.needs_intervention.is_empty();
+        let mut recovery_events = reconciliation.completed_events;
+        let (code, message) = if needs_intervention {
+            (
+                "RECOVERY_NEEDS_INTERVENTION",
+                format!(
+                    "LunaScope found an unfinished mutating tool after restart and will not replay it automatically. Inspect the preserved workspace before starting a new repair task. {}",
+                    reconciliation.needs_intervention.join("; ")
+                ),
+            )
+        } else {
+            (
+                "ORCHESTRATION_INTERRUPTED",
+                "The desktop restarted before the active orchestration reached a resumable checkpoint. Completed side effects were reconciled from the real workspace; artifacts and conversation context were preserved."
+                    .into(),
+            )
+        };
+        recovery_events.push(scoped_run_event(
+            run_id,
+            &scope.project_id,
+            &scope.thread_id,
+            EventSource::System,
+            EventData::RunFailed {
+                code: code.into(),
+                message,
+                recoverable: true,
+            },
+        ));
         state
             .store
-            .append_batch_next(vec![scoped_run_event(
-                run_id,
-                &scope.project_id,
-                &scope.thread_id,
-                EventSource::System,
-                EventData::RunFailed {
-                    code: "ORCHESTRATION_INTERRUPTED".into(),
-                    message: "The desktop restarted before the active orchestration reached a resumable checkpoint. Completed artifacts and conversation context were preserved."
-                        .into(),
-                    recoverable: true,
-                },
-            )])
+            .append_batch_next(recovery_events)
             .map_err(display_error)?;
         snapshot = state
             .store
             .recover(run_id)
             .map_err(display_error)?
             .ok_or_else(|| "orchestration projection missing after recovery".to_owned())?;
+        events = state.store.events_after(run_id, 0).map_err(display_error)?;
     }
     let Some(plan) = snapshot.orchestration_plan.clone() else {
         return Ok(None);
     };
-    let events = state.store.events_after(run_id, 0).map_err(display_error)?;
     let mut artifacts = Vec::new();
     let mut state_changes = Vec::new();
     let mut handoffs = Vec::new();
@@ -797,6 +817,173 @@ fn recover_orchestration_view(
         },
         source_run_ids: vec![run_id.clone()],
     }))
+}
+
+#[derive(Default)]
+struct ToolRecovery {
+    completed_events: Vec<EventEnvelope>,
+    needs_intervention: Vec<String>,
+}
+
+fn reconcile_unfinished_tool_calls(
+    data_root: &Path,
+    plan: &OrchestrationPlan,
+    events: &[EventEnvelope],
+) -> Result<ToolRecovery, String> {
+    let completed = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            EventData::ToolCallCompleted { worker_id, result } => {
+                Some((worker_id.clone(), result.call_id.clone()))
+            }
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    let mut recovery = ToolRecovery::default();
+    for event in events {
+        let EventData::ToolCallRequested { worker_id, call } = &event.payload else {
+            continue;
+        };
+        if completed.contains(&(worker_id.clone(), call.call_id.clone()))
+            || !tool_may_have_persistent_side_effects(&call.tool_id)
+        {
+            continue;
+        }
+        let Some(worker_id) = worker_id.as_ref() else {
+            recovery.needs_intervention.push(format!(
+                "{} has no Worker identity (idempotency key {})",
+                call.tool_id, call.idempotency_key
+            ));
+            continue;
+        };
+        match reconcile_workspace_tool(data_root, plan, worker_id, call)? {
+            Some(result) => {
+                let mut completed_event = orchestration_event(
+                    &event.run_id,
+                    plan,
+                    EventSource::System,
+                    Some(worker_id.clone()),
+                    EventData::ToolCallCompleted {
+                        worker_id: Some(worker_id.clone()),
+                        result,
+                    },
+                );
+                completed_event.event_id = EventId::new(format!(
+                    "tool-reconciled-{}-{}-{}",
+                    event.run_id, worker_id, call.call_id
+                ));
+                completed_event.parent_event_id = Some(event.event_id.clone());
+                completed_event.related_tool_event_id = Some(event.event_id.clone());
+                recovery.completed_events.push(completed_event);
+            }
+            None => recovery.needs_intervention.push(format!(
+                "{} for Worker {} could not be proven complete from workspace state (idempotency key {})",
+                call.tool_id, worker_id, call.idempotency_key
+            )),
+        }
+    }
+    Ok(recovery)
+}
+
+fn tool_may_have_persistent_side_effects(tool_id: &str) -> bool {
+    matches!(
+        tool_id,
+        "write_file"
+            | "replace_in_file"
+            | "apply_patch"
+            | "copy_file"
+            | "provision_npm_package"
+            | "run_process"
+            | "update_lunascope_preferences"
+            | "update_lunascope_routing"
+            | "install_skill_from_github"
+    )
+}
+
+fn reconcile_workspace_tool(
+    data_root: &Path,
+    plan: &OrchestrationPlan,
+    worker_id: &WorkerId,
+    call: &ToolCall,
+) -> Result<Option<ToolResult>, String> {
+    let Some(worktree) = latest_worker_worktree(data_root, plan, worker_id)? else {
+        return Ok(None);
+    };
+    let reconciled = match call.tool_id.as_str() {
+        "write_file" => {
+            let relative = required_string_argument(&call.input, "path")?;
+            let expected = required_string_argument(&call.input, "content")?;
+            let path = resolve_existing_workspace_path(&worktree, relative)?;
+            std::fs::read_to_string(path).is_ok_and(|actual| actual == expected)
+        }
+        "replace_in_file" => {
+            let relative = required_string_argument(&call.input, "path")?;
+            let old_text = required_string_argument(&call.input, "oldText")?;
+            let new_text = required_string_argument(&call.input, "newText")?;
+            let path = resolve_existing_workspace_path(&worktree, relative)?;
+            std::fs::read_to_string(path)
+                .is_ok_and(|actual| !actual.contains(old_text) && actual.contains(new_text))
+        }
+        "copy_file" => {
+            let source = resolve_existing_workspace_path(
+                &worktree,
+                required_string_argument(&call.input, "source")?,
+            )?;
+            let destination = resolve_existing_workspace_path(
+                &worktree,
+                required_string_argument(&call.input, "destination")?,
+            )?;
+            std::fs::read(source)
+                .ok()
+                .zip(std::fs::read(destination).ok())
+                .is_some_and(|(source, destination)| source == destination)
+        }
+        _ => false,
+    };
+    Ok(reconciled.then(|| ToolResult {
+        call_id: call.call_id.clone(),
+        success: true,
+        output: serde_json::json!({
+            "reconciledAfterRestart": true,
+            "idempotencyKey": call.idempotency_key,
+            "tool": call.tool_id
+        }),
+        error_code: None,
+        duration_ms: 0,
+    }))
+}
+
+fn latest_worker_worktree(
+    data_root: &Path,
+    plan: &OrchestrationPlan,
+    worker_id: &WorkerId,
+) -> Result<Option<PathBuf>, String> {
+    let orchestration_root = data_root
+        .join("worktrees")
+        .join(plan.orchestration_id.as_str());
+    if !orchestration_root.is_dir() {
+        return Ok(None);
+    }
+    let canonical_root = orchestration_root.canonicalize().map_err(display_error)?;
+    let prefix = format!("{}-attempt-", worker_id.as_str());
+    let mut candidates = std::fs::read_dir(&canonical_root)
+        .map_err(display_error)?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let attempt = name.strip_prefix(&prefix)?.parse::<u32>().ok()?;
+            Some((attempt, entry.path()))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|(attempt, _)| *attempt);
+    let Some((_, candidate)) = candidates.pop() else {
+        return Ok(None);
+    };
+    let candidate = candidate.canonicalize().map_err(display_error)?;
+    if !candidate.starts_with(&canonical_root) {
+        return Err("recovery worktree escaped its orchestration root".into());
+    }
+    Ok(Some(candidate))
 }
 
 fn parse_unified_diff(
@@ -957,6 +1144,7 @@ pub(crate) async fn draft_native_orchestration(
     on_progress: Channel<OrchestrationProgress>,
     allow_once: bool,
 ) -> Result<OrchestrationSession, String> {
+    crate::data_paths::ensure_operational().map_err(display_error)?;
     let project = project_id
         .as_deref()
         .map(|id| state.store.project(id).map_err(display_error))
@@ -1859,6 +2047,7 @@ pub(crate) fn patch_native_orchestration(
     run_id: String,
     patch: OrchestrationPatch,
 ) -> Result<OrchestrationSession, String> {
+    crate::data_paths::ensure_operational().map_err(display_error)?;
     let run_id = RunId::new(run_id);
     let snapshot = state
         .store
@@ -1986,8 +2175,12 @@ pub(crate) async fn run_native_orchestration(
     access_mode: Option<String>,
     on_progress: Channel<OrchestrationProgress>,
 ) -> Result<NativeOrchestrationOutcome, String> {
+    crate::data_paths::ensure_operational().map_err(display_error)?;
     let self_management_access = access_mode.as_deref() == Some("full_access");
     let workspace = canonical_workspace(&workspace_root)?;
+    if !EnvironmentInventory::inspect(&workspace).has_executable("git") {
+        return Err("GIT_NOT_FOUND: LunaScope needs Git to isolate and safely integrate Agent changes. Install Git for Windows, restart LunaScope, and retry the environment check.".into());
+    }
     let run_id = RunId::new(run_id);
     let snapshot = state
         .store
@@ -2362,13 +2555,27 @@ pub(crate) async fn retry_failed_native_orchestration(
     access_mode: Option<String>,
     on_progress: Channel<OrchestrationProgress>,
 ) -> Result<RetryOrchestrationOutcome, String> {
+    crate::data_paths::ensure_operational().map_err(display_error)?;
     let workspace = canonical_workspace(&workspace_root)?;
+    if !EnvironmentInventory::inspect(&workspace).has_executable("git") {
+        return Err("GIT_NOT_FOUND: LunaScope needs Git to isolate and safely integrate Agent changes. Install Git for Windows, restart LunaScope, and retry the environment check.".into());
+    }
     let source_run_id = RunId::new(source_run_id);
     let source_snapshot = state
         .store
         .recover(&source_run_id)
         .map_err(display_error)?
         .ok_or_else(|| format!("orchestration run not found: {source_run_id}"))?;
+    let source_events = state
+        .store
+        .events_after(&source_run_id, 0)
+        .map_err(display_error)?;
+    if recovery_needs_intervention(&source_events) {
+        return Err(
+            "RECOVERY_NEEDS_INTERVENTION: LunaScope will not automatically retry this run because a mutating tool was interrupted after its intent was committed. Inspect the preserved workspace, then start an explicit repair task."
+                .into(),
+        );
+    }
     let source_plan = source_snapshot
         .orchestration_plan
         .clone()
@@ -2406,6 +2613,15 @@ pub(crate) async fn retry_failed_native_orchestration(
         result,
         retried_worker_ids,
         resumed_worker_ids,
+    })
+}
+
+fn recovery_needs_intervention(events: &[EventEnvelope]) -> bool {
+    events.iter().any(|event| {
+        matches!(
+            &event.payload,
+            EventData::RunFailed { code, .. } if code == "RECOVERY_NEEDS_INTERVENTION"
+        )
     })
 }
 
@@ -3453,6 +3669,7 @@ pub(crate) async fn guide_native_orchestration(
     message_id: String,
     on_progress: Channel<OrchestrationProgress>,
 ) -> Result<GuidanceReplanOutcome, String> {
+    crate::data_paths::ensure_operational().map_err(display_error)?;
     let guidance = guidance.trim().to_owned();
     if guidance.is_empty() {
         return Err("guidance is required".to_owned());
@@ -4307,35 +4524,33 @@ pub(crate) fn selected_orchestration_model(
         .store
         .model_selection_settings(GLOBAL_ROUTING_SCOPE)
         .map_err(display_error)?
-    {
-        if let Some(provider) = providers
+        && let Some(provider) = providers
             .iter()
             .find(|provider| {
                 provider.enabled && provider.id == settings.orchestration.provider_config_id
             })
             .cloned()
-        {
-            let model = settings.orchestration.model_id;
-            let effort = effective_reasoning_effort(
-                provider.provider_type,
-                &model,
-                settings.orchestration.reasoning_effort,
-            );
-            let custom = settings
-                .orchestration
-                .custom_reasoning_effort
-                .clone()
-                .or_else(|| {
-                    settings
-                        .custom_reasoning_efforts
-                        .get(&reasoning_effort_override_key(
-                            &settings.orchestration.provider_config_id,
-                            &model,
-                        ))
-                        .cloned()
-                });
-            return Ok((provider, model, effort, custom));
-        }
+    {
+        let model = settings.orchestration.model_id;
+        let effort = effective_reasoning_effort(
+            provider.provider_type,
+            &model,
+            settings.orchestration.reasoning_effort,
+        );
+        let custom = settings
+            .orchestration
+            .custom_reasoning_effort
+            .clone()
+            .or_else(|| {
+                settings
+                    .custom_reasoning_efforts
+                    .get(&reasoning_effort_override_key(
+                        &settings.orchestration.provider_config_id,
+                        &model,
+                    ))
+                    .cloned()
+            });
+        return Ok((provider, model, effort, custom));
     }
     providers
         .iter()
@@ -5080,25 +5295,24 @@ fn normalize_model_worker_response(objective: &str, workers: &mut Vec<ModelWorke
         && ["three.js", "threejs"]
             .iter()
             .any(|term| lowered.contains(term))
-    {
-        if let Some(worker) = workers.iter_mut().find(|worker| {
+        && let Some(worker) = workers.iter_mut().find(|worker| {
             !worker.role.eq_ignore_ascii_case("verifier")
                 && worker.tools.iter().any(|tool| tool == "filesystem.patch")
-        }) {
-            if !worker.tools.iter().any(|tool| tool == "dependency.install") {
-                worker.tools.push("dependency.install".into());
-            }
-            if !worker.tools.iter().any(|tool| tool == "filesystem.read") {
-                worker.tools.push("filesystem.read".into());
-            }
-            if worker.write_scopes.is_empty() {
-                worker.write_scopes.push(".".into());
-            }
-            if !worker.prompt.contains("provision_npm_package") {
-                worker.prompt.push_str(
-                    "\nInspect the environment, then call provision_npm_package for the exact public Three.js package. Copy only the required local runtime assets and upstream license into the deliverable; never synthesize or approximate Three.js and never run package scripts.",
-                );
-            }
+        })
+    {
+        if !worker.tools.iter().any(|tool| tool == "dependency.install") {
+            worker.tools.push("dependency.install".into());
+        }
+        if !worker.tools.iter().any(|tool| tool == "filesystem.read") {
+            worker.tools.push("filesystem.read".into());
+        }
+        if worker.write_scopes.is_empty() {
+            worker.write_scopes.push(".".into());
+        }
+        if !worker.prompt.contains("provision_npm_package") {
+            worker.prompt.push_str(
+                "\nInspect the environment, then call provision_npm_package for the exact public Three.js package. Copy only the required local runtime assets and upstream license into the deliverable; never synthesize or approximate Three.js and never run package scripts.",
+            );
         }
     }
     if let Some(root) = explicit_project_root(objective) {
@@ -9934,30 +10148,24 @@ async fn execute_provider_worker(
             if success
                 && call.name == "check_browser_page"
                 && (supports_vision || vision_bridge.is_some())
+                && let Some(relative) = model_output.get("screenshotPath").and_then(Value::as_str)
+                && let Ok(path) = resolve_existing_workspace_path(&context.worktree_path, relative)
+                && let Ok(bytes) = std::fs::read(&path)
+                && bytes.len() <= 12 * 1024 * 1024
             {
-                if let Some(relative) = model_output.get("screenshotPath").and_then(Value::as_str) {
-                    if let Ok(path) =
-                        resolve_existing_workspace_path(&context.worktree_path, relative)
-                    {
-                        if let Ok(bytes) = std::fs::read(&path) {
-                            if bytes.len() <= 12 * 1024 * 1024 {
-                                browser_visuals.push(ProviderAttachment {
-                                    name: path
-                                        .file_name()
-                                        .and_then(|value| value.to_str())
-                                        .unwrap_or("browser-evidence.png")
-                                        .to_owned(),
-                                    media_type: "image/png".into(),
-                                    data_base64: base64::Engine::encode(
-                                        &base64::engine::general_purpose::STANDARD,
-                                        bytes,
-                                    ),
-                                    is_document: false,
-                                });
-                            }
-                        }
-                    }
-                }
+                browser_visuals.push(ProviderAttachment {
+                    name: path
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("browser-evidence.png")
+                        .to_owned(),
+                    media_type: "image/png".into(),
+                    data_base64: base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        bytes,
+                    ),
+                    is_document: false,
+                });
             }
         }
         if let Some(monitor) = &dynamic_monitor {
@@ -11315,10 +11523,9 @@ async fn execute_worker_tool(
                         std::fs::write(visible, bytes).map_err(|error| error.to_string())?;
                     } else if let Ok(visible) =
                         resolve_existing_workspace_path(write_through_root, relative)
+                        && visible.is_file()
                     {
-                        if visible.is_file() {
-                            std::fs::remove_file(visible).map_err(|error| error.to_string())?;
-                        }
+                        std::fs::remove_file(visible).map_err(|error| error.to_string())?;
                     }
                 }
             }
@@ -12833,7 +13040,7 @@ mod tests {
         ModelAssignment, OrchestrationPatchOperation, ReasoningEffort, WorkerField, WorkerPatch,
     };
     use lunascope_extensions::McpCredentialStore;
-    use lunascope_integrations::KeyringCredentialStore;
+    use lunascope_integrations::{KeyringCredentialStore, SecretValue};
     use lunascope_runtime::draft_orchestration;
     use lunascope_storage::SqliteEventStore;
 
@@ -12866,6 +13073,155 @@ mod tests {
 
     fn executor_store() -> Arc<SqliteEventStore> {
         Arc::new(SqliteEventStore::open_in_memory().expect("executor store"))
+    }
+
+    fn release_canary_credential_reference() -> lunascope_core::CredentialReference {
+        lunascope_core::CredentialReference {
+            id: "deepseek-primary".into(),
+            provider: ProviderType::DeepSeek,
+            label: "DeepSeek official".into(),
+        }
+    }
+
+    #[test]
+    #[ignore = "loads RELEASE_CANARY_DEEPSEEK_API_KEY into the current Windows runner credential store"]
+    fn seed_release_canary_credential_from_environment() {
+        let value = std::env::var("RELEASE_CANARY_DEEPSEEK_API_KEY")
+            .expect("set RELEASE_CANARY_DEEPSEEK_API_KEY in the secret-enabled workflow");
+        let secret = SecretValue::new(value).expect("non-empty canary credential");
+        KeyringCredentialStore
+            .put(&release_canary_credential_reference(), &secret)
+            .expect("store ephemeral release canary credential");
+    }
+
+    #[test]
+    #[ignore = "removes the release canary credential from the current Windows runner"]
+    fn remove_release_canary_credential() {
+        KeyringCredentialStore
+            .delete(&release_canary_credential_reference())
+            .expect("remove ephemeral release canary credential");
+    }
+
+    #[test]
+    fn restart_reconciles_a_completed_write_without_replaying_the_side_effect() {
+        let temporary = tempfile::tempdir().expect("temporary recovery fixture");
+        let database = temporary.path().join("events.db");
+        let data_root = temporary.path().join("data");
+        let plan = fixture_plan();
+        let worker = plan.workers.first().expect("worker");
+        let worktree = data_root
+            .join("worktrees")
+            .join(plan.orchestration_id.as_str())
+            .join(format!("{}-attempt-1", worker.worker_id));
+        std::fs::create_dir_all(worktree.join("src")).expect("worktree");
+        let file = worktree.join("src/recovered.txt");
+        std::fs::write(&file, "side effect completed\n").expect("side effect");
+        let mut permissions = std::fs::metadata(&file).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&file, permissions.clone()).unwrap();
+
+        let run_id = RunId::new("run-crash-after-write");
+        {
+            let store = SqliteEventStore::open(&database).expect("store");
+            let call = ToolCall {
+                call_id: "call-write".into(),
+                tool_id: "write_file".into(),
+                input: serde_json::json!({
+                    "path": "src/recovered.txt",
+                    "content": "side effect completed\n"
+                }),
+                idempotency_key: format!("{}:{}:1:call-write", run_id, worker.worker_id),
+                timeout_ms: 30_000,
+            };
+            store
+                .append_batch_next(vec![
+                    orchestration_event(
+                        &run_id,
+                        &plan,
+                        EventSource::User,
+                        None,
+                        EventData::RunCreated {
+                            title: "failure injection".into(),
+                            initial_prompt: "persist intent, write, crash".into(),
+                        },
+                    ),
+                    orchestration_event(
+                        &run_id,
+                        &plan,
+                        EventSource::Worker(worker.worker_id.clone()),
+                        Some(worker.worker_id.clone()),
+                        EventData::ToolCallRequested {
+                            worker_id: Some(worker.worker_id.clone()),
+                            call,
+                        },
+                    ),
+                ])
+                .expect("persist intent before simulated crash");
+        }
+
+        let reopened = SqliteEventStore::open(&database).expect("restart store");
+        let events = reopened
+            .events_after(&run_id, 0)
+            .expect("events after restart");
+        let recovery = reconcile_unfinished_tool_calls(&data_root, &plan, &events)
+            .expect("reconcile real workspace state");
+        assert!(recovery.needs_intervention.is_empty());
+        assert_eq!(recovery.completed_events.len(), 1);
+        assert!(matches!(
+            &recovery.completed_events[0].payload,
+            EventData::ToolCallCompleted { result, .. }
+                if result.success && result.output["reconciledAfterRestart"] == true
+        ));
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "side effect completed\n"
+        );
+
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(file, permissions).unwrap();
+    }
+
+    #[test]
+    fn ambiguous_mutating_call_requires_intervention_and_cannot_auto_retry() {
+        let temporary = tempfile::tempdir().expect("temporary recovery fixture");
+        let plan = fixture_plan();
+        let worker = plan.workers.first().expect("worker");
+        let run_id = RunId::new("run-ambiguous-patch");
+        let events = vec![orchestration_event(
+            &run_id,
+            &plan,
+            EventSource::Worker(worker.worker_id.clone()),
+            Some(worker.worker_id.clone()),
+            EventData::ToolCallRequested {
+                worker_id: Some(worker.worker_id.clone()),
+                call: ToolCall {
+                    call_id: "call-patch".into(),
+                    tool_id: "apply_patch".into(),
+                    input: serde_json::json!({"patch": "diff --git a/a b/a"}),
+                    idempotency_key: "run:worker:1:call-patch".into(),
+                    timeout_ms: 30_000,
+                },
+            },
+        )];
+        let recovery = reconcile_unfinished_tool_calls(temporary.path(), &plan, &events)
+            .expect("recovery classification");
+        assert!(recovery.completed_events.is_empty());
+        assert_eq!(recovery.needs_intervention.len(), 1);
+
+        let mut failed = events;
+        failed.push(orchestration_event(
+            &run_id,
+            &plan,
+            EventSource::System,
+            None,
+            EventData::RunFailed {
+                code: "RECOVERY_NEEDS_INTERVENTION".into(),
+                message: "inspect workspace".into(),
+                recoverable: true,
+            },
+        ));
+        assert!(recovery_needs_intervention(&failed));
     }
 
     #[test]
@@ -15588,8 +15944,8 @@ start.bat 优先 python，再 py；都不可用时显示错误且不直接关闭
         ))
         .expect("DeepSeek orchestration draft")
         .draft;
-        if orchestration_draft_needs_quality_review(OBJECTIVE, &draft) {
-            if let Some(reviewed) = tauri::async_runtime::block_on(review_orchestration_draft(
+        if orchestration_draft_needs_quality_review(OBJECTIVE, &draft)
+            && let Some(reviewed) = tauri::async_runtime::block_on(review_orchestration_draft(
                 &client,
                 OrchestrationDraftReviewRequest {
                     model: "deepseek-v4-flash",
@@ -15601,9 +15957,9 @@ start.bat 优先 python，再 py；都不可用时显示错误且不直接关闭
                     custom_reasoning_effort: None,
                     cancellation: CancellationToken::new(),
                 },
-            )) {
-                draft = reviewed;
-            }
+            ))
+        {
+            draft = reviewed;
         }
         draft = tauri::async_runtime::block_on(repair_orchestration_draft_chinese(
             &client,
@@ -16290,8 +16646,8 @@ start.bat 优先 python，再 py；都不可用时显示错误且不直接关闭
         ))
         .expect("DeepSeek GARGANTUA orchestration draft")
         .draft;
-        if orchestration_draft_needs_quality_review(OBJECTIVE, &draft) {
-            if let Some(reviewed) = tauri::async_runtime::block_on(review_orchestration_draft(
+        if orchestration_draft_needs_quality_review(OBJECTIVE, &draft)
+            && let Some(reviewed) = tauri::async_runtime::block_on(review_orchestration_draft(
                 &client,
                 OrchestrationDraftReviewRequest {
                     model: "deepseek-v4-flash",
@@ -16303,9 +16659,9 @@ start.bat 优先 python，再 py；都不可用时显示错误且不直接关闭
                     custom_reasoning_effort: None,
                     cancellation: CancellationToken::new(),
                 },
-            )) {
-                draft = reviewed;
-            }
+            ))
+        {
+            draft = reviewed;
         }
         draft = tauri::async_runtime::block_on(repair_orchestration_draft_chinese(
             &client,
@@ -17010,5 +17366,84 @@ start.bat 优先 python，再 py；都不可用时显示错误且不直接关闭
             false,
             true,
         ));
+    }
+
+    #[test]
+    #[ignore = "performs a real source-grounded research Worker request through DeepSeek"]
+    fn deepseek_v4_flash_live_research_canary() {
+        let temporary = tempfile::tempdir().expect("temporary research fixture");
+        std::fs::write(
+            temporary.path().join("source-a.md"),
+            "# Source A\nThe deterministic scheduler records every terminal Worker state.\n",
+        )
+        .expect("source A");
+        std::fs::write(
+            temporary.path().join("source-b.md"),
+            "# Source B\nVerification requires criterion-level observable evidence.\n",
+        )
+        .expect("source B");
+        let mut spec = fixture_plan().workers.remove(0);
+        spec.role = "research".into();
+        spec.task = "Compare source-a.md and source-b.md. Return a concise synthesis that attributes every claim to Source A or Source B and states any remaining uncertainty.".into();
+        spec.prompt = spec.task.clone();
+        spec.tools = vec!["filesystem.read".into()];
+        spec.write_scopes.clear();
+        spec.model.provider = "deepseek-primary".into();
+        spec.model.model = "deepseek-v4-flash".into();
+        spec.timeout_ms = 90_000;
+        spec.budget.maximum_output_tokens = Some(2_048);
+        let config = ProviderConfig {
+            id: "deepseek-primary".into(),
+            provider_type: ProviderType::DeepSeek,
+            protocol: ProviderProtocol::OpenAiChatCompletions,
+            display_name: "DeepSeek official".into(),
+            base_url: "https://api.deepseek.com".into(),
+            credential_reference_id: "deepseek-primary".into(),
+            default_model_id: "deepseek-v4-flash".into(),
+            custom_headers: Vec::new(),
+            context_window_tokens: None,
+            supports_tools: true,
+            supports_vision: false,
+            supports_structured_output: true,
+            enabled: true,
+        };
+        let executor = NativeProviderWorkerExecutor {
+            providers: BTreeMap::from([(config.id.clone(), config)]),
+            credentials: KeyringCredentialStore,
+            progress: Channel::new(|_| Ok(())),
+            journal: None,
+            reply_language: "Reply in English and attribute claims to the named sources.".into(),
+            output_language: UiLanguage::English,
+            store: executor_store(),
+            self_management_access: false,
+            vision_bridge: None,
+            dynamic_monitor: None,
+        };
+        let output = tauri::async_runtime::block_on(executor.execute(WorkerExecutionContext {
+            spec,
+            attempt: 1,
+            acceptance_contract: vec!["Every factual claim names Source A or Source B.".into()],
+            previous_failure: None,
+            can_handoff_incomplete: false,
+            worktree_path: temporary.path().to_path_buf(),
+            write_through_workspace_path: None,
+            workspace_snapshot: Some(
+                "source-a.md and source-b.md are the only allowed research sources".into(),
+            ),
+            input_artifacts: Vec::new(),
+            cancellation: CancellationToken::new(),
+            control: Arc::new(SchedulerControl::new(&fixture_plan())),
+        }))
+        .expect("source-grounded research result");
+        assert!(!output.summary.trim().is_empty());
+        assert!(!output.artifacts.is_empty());
+        assert_eq!(
+            std::fs::read_to_string(temporary.path().join("source-a.md")).unwrap(),
+            "# Source A\nThe deterministic scheduler records every terminal Worker state.\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temporary.path().join("source-b.md")).unwrap(),
+            "# Source B\nVerification requires criterion-level observable evidence.\n"
+        );
     }
 }

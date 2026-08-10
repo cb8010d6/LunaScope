@@ -8,7 +8,7 @@ LunaScope 0.3.1 is a Windows public engineering preview of the Moonwatcher Proje
 - Finer multi-Agent decomposition with up to 24 task-derived Workers, bounded parallel execution, explicit write scopes, dynamic supervision, and criterion-level verification.
 - Stable orchestration graph geometry with pan, zoom, minimap, topology-aware layout, incremental state changes, and retained viewport state.
 - Typed Agent-session message flow with public model summaries, first-class tool events, Worker traces, and persistent same-thread context.
-- OpenAI Responses, OpenAI Chat Completions, Anthropic Messages, and generic compatible Provider transports; exact model/effort connection testing is required before routing settings are saved.
+- OpenAI Responses, OpenAI Chat Completions, Anthropic Messages, and generic compatible Provider transports with explicit model/effort testing controls.
 - Independent vision fallback for text-only primary models, bounded local browser acceptance, five escalating transport retries, and progress-sensitive verifier repair without a fixed generation cap.
 - Expanded UltraNote project workflow: syllabus-backed course memory, PDF/Office/image ingestion, cited bilingual notes, local Mermaid and math rendering, course retrieval, Markdown archive, interactive HTML, and offline PDF export.
 - Optional desktop Companion workflows for pinned Live2D and Spine resources with explicit license handling.
@@ -33,7 +33,7 @@ The release build passed:
 - `npm run typecheck`
 - `npm run contract:check`
 - `npm run test:companion-assets`
-- `npm run evals:check`
+- `npm run evals:manifest-check` (manifest schema only; not a live eval)
 - `npm run build`
 - `npm run tauri -- build`
 
