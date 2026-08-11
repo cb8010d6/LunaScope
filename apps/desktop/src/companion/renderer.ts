@@ -1,6 +1,11 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 import type { CompanionPhase, CompanionSettings } from "./types";
+import {
+  CompanionPhaseGate,
+  selectLive2DInteractionMotion,
+  startLive2DOneShot,
+} from "./interaction";
 import { encodeSpineAssetUrl } from "./vendor/asset-url.js";
 import { Application, Ticker } from "./vendor/pixi-runtime.js";
 import { SpinePlayer } from "./vendor/spine-player.js";
@@ -8,12 +13,25 @@ import { SpinePlayer } from "./vendor/spine-player.js";
 export interface CompanionRenderer {
   init(): Promise<void>;
   applyPhase(phase: CompanionPhase): void;
+  playInteraction(): boolean;
+  containsPoint(x: number, y: number): boolean;
+  getInteractiveBounds(): CompanionBounds | null;
   captureFrame?(): string | null;
   destroy(): void;
 }
 
+export type CompanionBounds = {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+  width: number;
+  height: number;
+};
+
 export class Spine38Renderer implements CompanionRenderer {
   private readonly player: SpinePlayer;
+  private readonly phases = new CompanionPhaseGate();
 
   constructor(stage: HTMLElement, settings: CompanionSettings) {
     if (!settings.modelPath) {
@@ -57,10 +75,43 @@ export class Spine38Renderer implements CompanionRenderer {
   }
 
   applyPhase(phase: CompanionPhase): void {
+    if (!this.phases.requestPhase(phase)) return;
     this.player.applyState(
       { state: phase, source: "lunascope-native" },
       true,
     );
+  }
+
+  playInteraction(): boolean {
+    const version = this.phases.beginInteraction();
+    const entry = this.player.playOneShot(
+      { state: "reminder", source: "click" },
+      () => {
+        const phase = this.phases.finishInteraction(version);
+        if (!phase) return;
+        this.player.applyState(
+          { state: phase, source: "lunascope-native" },
+          true,
+        );
+      },
+    );
+    if (entry === null) this.phases.cancelInteraction(version);
+    return entry !== null;
+  }
+
+  containsPoint(x: number, y: number): boolean {
+    const bounds = this.getInteractiveBounds();
+    return Boolean(
+      bounds &&
+      x >= bounds.left &&
+      x <= bounds.right &&
+      y >= bounds.top &&
+      y <= bounds.bottom
+    );
+  }
+
+  getInteractiveBounds(): CompanionBounds | null {
+    return this.player.getInteractiveBounds();
   }
 
   captureFrame(): string | null {
@@ -68,6 +119,7 @@ export class Spine38Renderer implements CompanionRenderer {
   }
 
   destroy(): void {
+    this.phases.reset();
     this.player.destroy();
   }
 }
@@ -115,6 +167,7 @@ export class Live2DRenderer implements CompanionRenderer {
   private model: import("./vendor/live2d/cubism4.es.js").Live2DModel | null = null;
   private pendingPhase: CompanionPhase = "idle";
   private manifestUrl: string | null = null;
+  private readonly phases = new CompanionPhaseGate();
 
   constructor(
     private readonly stage: HTMLElement,
@@ -217,6 +270,11 @@ export class Live2DRenderer implements CompanionRenderer {
 
   applyPhase(phase: CompanionPhase): void {
     this.pendingPhase = phase;
+    if (!this.phases.requestPhase(phase)) return;
+    this.playPhase(phase);
+  }
+
+  private playPhase(phase: CompanionPhase): void {
     if (!this.model) return;
     const definitions =
       this.model.internalModel.motionManager?.definitions ?? {};
@@ -233,7 +291,47 @@ export class Live2DRenderer implements CompanionRenderer {
     }
   }
 
+  playInteraction(): boolean {
+    const model = this.model;
+    if (!model) return false;
+    const manager = model.internalModel.motionManager;
+    if (!manager) return false;
+    const group = selectLive2DInteractionMotion(Object.keys(manager?.definitions ?? {}));
+    if (!group) return false;
+
+    const version = this.phases.beginInteraction();
+    const restorePhase = () => {
+      const phase = this.phases.finishInteraction(version);
+      if (phase) this.playPhase(phase);
+    };
+    void startLive2DOneShot(
+      () => model.motion(group, undefined, 3),
+      () => manager.once("motionFinish", restorePhase),
+      restorePhase,
+    );
+    return true;
+  }
+
+  containsPoint(x: number, y: number): boolean {
+    if (!this.model) return false;
+    return this.model.hitTest(x, y).length > 0 || this.model.containsPoint({ x, y });
+  }
+
+  getInteractiveBounds(): CompanionBounds | null {
+    if (!this.model) return null;
+    const bounds = this.model.getBounds(true);
+    return {
+      left: bounds.x,
+      right: bounds.x + bounds.width,
+      top: bounds.y,
+      bottom: bounds.y + bounds.height,
+      width: bounds.width,
+      height: bounds.height,
+    };
+  }
+
   destroy(): void {
+    this.phases.reset();
     this.model?.destroy({ children: true });
     this.model = null;
     this.app?.destroy(true, { children: true, texture: true, baseTexture: true });
