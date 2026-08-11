@@ -49,8 +49,11 @@ function redact(value) {
   return redactSensitiveText(value, [secret]);
 }
 
-function cargoTest(filter) {
+function cargoTest(filter, { includeCanarySecret = false } = {}) {
   const environment = { ...process.env };
+  if (!includeCanarySecret) {
+    delete environment.RELEASE_CANARY_DEEPSEEK_API_KEY;
+  }
   for (const key of Object.keys(environment)) {
     if (/^GIT_CONFIG(?:_|$)/i.test(key)) delete environment[key];
   }
@@ -71,7 +74,9 @@ const startedAt = new Date();
 const evidence = [];
 let seeded = false;
 try {
-  const seed = cargoTest("seed_release_canary_credential_from_environment");
+  const seed = cargoTest("seed_release_canary_credential_from_environment", {
+    includeCanarySecret: true,
+  });
   if (seed.status !== 0) {
     throw new Error(`Could not stage the ephemeral Windows credential: ${redact(seed.stderr).slice(-1200)}`);
   }

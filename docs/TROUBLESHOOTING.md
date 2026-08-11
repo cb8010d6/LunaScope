@@ -33,7 +33,7 @@ For `PROVIDER_MODEL_UNSUPPORTED` or `MODEL_REASONING_TEST_REQUIRED`:
 3. Confirm the endpoint and protocol in the Provider configuration.
 4. Use the per-model **Run real test** control before saving the routing change.
 
-The test result is scoped to the exact Provider configuration, model, credential reference, and reasoning value in the current desktop session.
+The test result is scoped to the exact Provider configuration, model, endpoint, credential reference, and reasoning value. It remains valid across restarts until one of those values changes.
 
 ## Data directory unavailable or not writable
 

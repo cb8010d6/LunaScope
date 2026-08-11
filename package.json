@@ -18,6 +18,7 @@
     "evals:canary": "node scripts/run-release-canary.mjs",
     "endurance": "node scripts/run-endurance.mjs",
     "release:gate:test": "node --test scripts/release-gate.test.mjs",
+    "test:release-secret-scope": "node --test scripts/release-secret-scope.test.mjs",
     "test:release-evidence-redaction": "node --test scripts/redact-sensitive.test.mjs",
     "tauri": "tauri"
   },

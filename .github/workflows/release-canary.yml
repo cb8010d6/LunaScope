@@ -16,8 +16,8 @@ jobs:
     if: inputs.confirm_paid_run
     runs-on: windows-latest
     timeout-minutes: 180
-    env:
-      RELEASE_CANARY_DEEPSEEK_API_KEY: ${{ secrets.RELEASE_CANARY_DEEPSEEK_API_KEY }}
+    environment:
+      name: release-canary
     steps:
       - uses: actions/checkout@v4
 
@@ -43,15 +43,9 @@ jobs:
           $env:LUNASCOPE_ATTACHMENT_FIXTURE_ROOT = $fixtureRoot
           cargo test -p lunascope-desktop --lib common_document_fixture_canary -- --ignored --nocapture
 
-      - name: Require secret-enabled workflow
-        shell: pwsh
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:RELEASE_CANARY_DEEPSEEK_API_KEY)) {
-            throw "RELEASE_CANARY_DEEPSEEK_API_KEY is not configured. No canary was run."
-          }
-
       - name: Run representative live Provider canaries
         env:
+          RELEASE_CANARY_DEEPSEEK_API_KEY: ${{ secrets.RELEASE_CANARY_DEEPSEEK_API_KEY }}
           LUNASCOPE_ATTACHMENT_FIXTURE_ROOT: ${{ runner.temp }}\lunascope-canary-fixtures
         run: npm run evals:canary
 

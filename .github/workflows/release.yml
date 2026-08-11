@@ -23,13 +23,12 @@ jobs:
     needs: validate
     runs-on: windows-latest
     timeout-minutes: 60
+    environment:
+      name: release-signing
     outputs:
       channel: ${{ steps.release-meta.outputs.channel }}
       signed: ${{ steps.release-meta.outputs.signed }}
       artifact_label: ${{ steps.release-meta.outputs.artifact_label }}
-    env:
-      WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
-      WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -60,6 +59,9 @@ jobs:
       - name: Determine channel and sign the application executable when available
         id: release-meta
         shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
         run: |
           $channel = "${{ inputs.channel }}"
           if ([string]::IsNullOrWhiteSpace($channel)) {
@@ -92,6 +94,9 @@ jobs:
       - name: Sign and verify the NSIS installer
         if: steps.release-meta.outputs.signed == 'true'
         shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
         run: |
           .\scripts\sign-windows.ps1 -Paths artifacts\LunaScope-setup.exe
 

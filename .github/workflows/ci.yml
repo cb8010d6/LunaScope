@@ -89,6 +89,9 @@ jobs:
       - name: Release gate tests
         run: npm run release:gate:test
 
+      - name: Release secret scope tests
+        run: npm run test:release-secret-scope
+
       - name: Release evidence redaction tests
         run: npm run test:release-evidence-redaction
 

@@ -840,6 +840,7 @@ fn reconcile_unfinished_tool_calls(
         })
         .collect::<BTreeSet<_>>();
     let mut recovery = ToolRecovery::default();
+    let shadow_repository = shadow_repository_present(data_root, plan);
     for event in events {
         let EventData::ToolCallRequested { worker_id, call } = &event.payload else {
             continue;
@@ -856,6 +857,13 @@ fn reconcile_unfinished_tool_calls(
             ));
             continue;
         };
+        if shadow_repository {
+            recovery.needs_intervention.push(format!(
+                "{} for Worker {} belongs to a shadow/non-Git workspace; the visible write-through state cannot be proven after restart (idempotency key {})",
+                call.tool_id, worker_id, call.idempotency_key
+            ));
+            continue;
+        }
         match reconcile_workspace_tool(data_root, plan, worker_id, call)? {
             Some(result) => {
                 let mut completed_event = orchestration_event(
@@ -883,6 +891,14 @@ fn reconcile_unfinished_tool_calls(
         }
     }
     Ok(recovery)
+}
+
+fn shadow_repository_present(data_root: &Path, plan: &OrchestrationPlan) -> bool {
+    data_root
+        .join("worktrees")
+        .join(plan.orchestration_id.as_str())
+        .join("base-repository")
+        .is_dir()
 }
 
 fn tool_may_have_persistent_side_effects(tool_id: &str) -> bool {
@@ -13179,6 +13195,68 @@ mod tests {
         #[allow(clippy::permissions_set_readonly_false)]
         permissions.set_readonly(false);
         std::fs::set_permissions(file, permissions).unwrap();
+    }
+
+    #[test]
+    fn non_git_workspace_crash_between_worktree_and_write_through_requires_intervention() {
+        let temporary = tempfile::tempdir().expect("temporary recovery fixture");
+        let data_root = temporary.path().join("data");
+        let visible_workspace = temporary.path().join("visible-workspace");
+        let plan = fixture_plan();
+        let worker = plan.workers.first().expect("worker");
+        let orchestration_root = data_root
+            .join("worktrees")
+            .join(plan.orchestration_id.as_str());
+        let worktree = orchestration_root.join(format!("{}-attempt-1", worker.worker_id));
+        std::fs::create_dir_all(worktree.join("src")).expect("worktree");
+        std::fs::create_dir_all(&visible_workspace).expect("visible workspace");
+        std::fs::create_dir_all(orchestration_root.join("base-repository"))
+            .expect("shadow repository marker");
+        std::fs::write(
+            worktree.join("src/recovered.txt"),
+            "worktree write completed\n",
+        )
+        .expect("worktree side effect");
+        std::fs::create_dir_all(visible_workspace.join("src")).expect("visible src");
+        std::fs::write(
+            visible_workspace.join("src/recovered.txt"),
+            "visible write-through not reached\n",
+        )
+        .expect("visible pre-state");
+
+        let run_id = RunId::new("run-shadow-crash-between-writes");
+        let events = vec![orchestration_event(
+            &run_id,
+            &plan,
+            EventSource::Worker(worker.worker_id.clone()),
+            Some(worker.worker_id.clone()),
+            EventData::ToolCallRequested {
+                worker_id: Some(worker.worker_id.clone()),
+                call: ToolCall {
+                    call_id: "call-shadow-write".into(),
+                    tool_id: "write_file".into(),
+                    input: serde_json::json!({
+                        "path": "src/recovered.txt",
+                        "content": "worktree write completed\n"
+                    }),
+                    idempotency_key: format!("{}:{}:1:call-shadow-write", run_id, worker.worker_id),
+                    timeout_ms: 30_000,
+                },
+            },
+        )];
+
+        // Failure injection: the worktree contains the post-state, while visible
+        // write-through is still at its pre-state when the process restarts.
+        let recovery = reconcile_unfinished_tool_calls(&data_root, &plan, &events)
+            .expect("recovery classification");
+        assert!(recovery.completed_events.is_empty());
+        assert_eq!(recovery.needs_intervention.len(), 1);
+        assert!(recovery.needs_intervention[0].contains("shadow/non-Git"));
+        assert_eq!(
+            std::fs::read_to_string(visible_workspace.join("src/recovered.txt"))
+                .expect("visible pre-state remains"),
+            "visible write-through not reached\n"
+        );
     }
 
     #[test]

@@ -227,7 +227,7 @@ impl EnvironmentInventory {
             issues.push(ActionableDiagnostic::error(
                 DiagnosticCode::ModelReasoningTestRequired,
                 "Verify the selected model",
-                "The selected model and reasoning setting have not passed a compatibility test in this session.",
+                "The selected Provider, model, endpoint, credential reference, and reasoning setting have not passed a compatibility test for this exact configuration.",
                 "A real compatibility check prevents an unsupported model setting from failing after the task starts.",
                 ["Open Settings → Models & Providers and run the model test for the selected setting before retrying."],
             ));
