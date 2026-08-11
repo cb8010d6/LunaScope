@@ -34,19 +34,48 @@ body,
   position: absolute;
   top: 12px;
   left: 12px;
-  right: 38px;
   z-index: 3;
   display: grid;
   gap: 4px;
-  max-height: 92px;
-  padding: 10px 12px;
-  overflow: hidden;
+  width: max-content;
+  max-width: min(250px, calc(100% - 24px));
+  max-height: 88px;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  overflow: visible;
   color: #f7f8fa;
-  background: rgba(25, 28, 34, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 6px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  background: rgba(27, 30, 36, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(12px) saturate(1.08);
   pointer-events: none;
+  animation: companion-bubble-in 150ms ease-out;
+}
+
+#companion-bubble[hidden] {
+  display: none !important;
+}
+
+#companion-bubble::after {
+  position: absolute;
+  left: calc(50% - 5px);
+  width: 10px;
+  height: 10px;
+  background: rgba(27, 30, 36, 0.82);
+  border: solid rgba(255, 255, 255, 0.12);
+  content: "";
+  transform: rotate(45deg);
+}
+
+#companion-bubble[data-side="above"]::after {
+  bottom: -6px;
+  border-width: 0 1px 1px 0;
+}
+
+#companion-bubble[data-side="below"]::after {
+  top: -6px;
+  border-width: 1px 0 0 1px;
 }
 
 #companion-bubble strong {
@@ -62,23 +91,36 @@ body,
   white-space: nowrap;
 }
 
+@keyframes companion-bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 #companion-hide {
   position: absolute;
   top: 10px;
   right: 10px;
   z-index: 4;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   color: #f7f8fa;
-  background: rgba(25, 28, 34, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 4px;
+  background: rgba(25, 28, 34, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
   opacity: 0;
   transition: opacity 120ms ease;
 }
 
-#companion-shell:hover #companion-hide,
+#companion-hide.is-near-model,
+#companion-hide:hover,
 #companion-hide:focus-visible {
   opacity: 1;
 }
@@ -98,7 +140,9 @@ body,
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #companion-hide {
+  #companion-hide,
+  #companion-bubble {
     transition: none;
+    animation: none;
   }
 }
