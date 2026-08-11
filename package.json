@@ -10,6 +10,8 @@
     "test:pixi-runtime": "node --no-warnings --test apps/desktop/src/companion/vendor/pixi-runtime.test.mjs",
     "test:tauri-csp": "node --no-warnings --test apps/desktop/src/tauri-csp.test.mjs",
     "test:environment-preflight": "node --no-warnings --experimental-strip-types --test apps/desktop/src/environment-preflight.test.ts",
+    "test:companion-assets": "node --no-warnings --experimental-strip-types --test apps/desktop/src/companion/vendor/asset-url.test.mjs apps/desktop/src/companion/interaction.test.mjs",
+    "test:companion-interaction": "node --no-warnings --experimental-strip-types --test apps/desktop/src/companion/interaction.test.mjs",
     "contract:check": "tsc -p packages/runtime-contract/tsconfig.json --noEmit",
     "evals:manifest-check": "node scripts/check-evals.mjs",
     "evals:manifest-test": "node --test scripts/check-evals.test.mjs",

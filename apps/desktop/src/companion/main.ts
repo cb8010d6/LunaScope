@@ -3,6 +3,11 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import "./styles.css";
+import {
+  CompanionPointerGesture,
+  placeBubbleNearModel,
+  shouldShowCompanionBubble,
+} from "./interaction";
 import type { CompanionRenderer } from "./renderer";
 import { companionRenderer } from "./renderer";
 import type { CompanionActivity, CompanionSettings } from "./types";
@@ -19,6 +24,73 @@ let renderer: CompanionRenderer | null = null;
 let settings: CompanionSettings | null = null;
 let bubbleTimer = 0;
 let settingsGeneration = 0;
+const pointerGesture = new CompanionPointerGesture();
+
+function hideBubble(): void {
+  window.clearTimeout(bubbleTimer);
+  bubbleTimer = 0;
+  if (bubble) bubble.hidden = true;
+}
+
+function positionBubble(): void {
+  if (!stage || !bubble || bubble.hidden) return;
+  const bounds = renderer?.getInteractiveBounds();
+  if (!bounds) {
+    bubble.style.left = "12px";
+    bubble.style.top = "12px";
+    bubble.dataset.side = "above";
+    return;
+  }
+  const placement = placeBubbleNearModel(
+    { width: stage.clientWidth, height: stage.clientHeight },
+    { width: bubble.offsetWidth, height: bubble.offsetHeight },
+    bounds,
+  );
+  bubble.style.left = `${Math.round(placement.left)}px`;
+  bubble.style.top = `${Math.round(placement.top)}px`;
+  bubble.dataset.side = placement.side;
+}
+
+function positionHideButton(): void {
+  if (!stage || !hideButton) return;
+  const bounds = renderer?.getInteractiveBounds();
+  if (!bounds) {
+    hideButton.style.removeProperty("left");
+    hideButton.style.removeProperty("right");
+    hideButton.style.removeProperty("top");
+    return;
+  }
+  const left = Math.min(
+    stage.clientWidth - hideButton.offsetWidth - 8,
+    Math.max(8, bounds.right - hideButton.offsetWidth * 0.4),
+  );
+  const top = Math.min(
+    stage.clientHeight - hideButton.offsetHeight - 8,
+    Math.max(8, bounds.top - hideButton.offsetHeight * 0.4),
+  );
+  hideButton.style.left = `${Math.round(left)}px`;
+  hideButton.style.right = "auto";
+  hideButton.style.top = `${Math.round(top)}px`;
+}
+
+function positionOverlays(): void {
+  positionBubble();
+  positionHideButton();
+}
+
+function stagePoint(event: PointerEvent): { x: number; y: number } | null {
+  if (!stage) return null;
+  const rect = stage.getBoundingClientRect();
+  return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+}
+
+function releasePointer(pointerId: number): void {
+  try {
+    if (stage?.hasPointerCapture(pointerId)) stage.releasePointerCapture(pointerId);
+  } catch {
+    // Native window dragging may release capture before the DOM receives cleanup.
+  }
+}
 
 function showError(message: string): void {
   if (!errorElement) return;
@@ -29,6 +101,8 @@ function showError(message: string): void {
 async function applySettings(next: CompanionSettings): Promise<void> {
   const generation = ++settingsGeneration;
   settings = next;
+  hideBubble();
+  pointerGesture.cancel();
   renderer?.destroy();
   renderer = null;
   if (!next.enabled || !next.modelPath) {
@@ -50,6 +124,7 @@ async function applySettings(next: CompanionSettings): Promise<void> {
     instance.applyPhase("idle");
     renderer = instance;
     await appWindow.show();
+    window.requestAnimationFrame(positionOverlays);
     void invoke("companion_report_renderer_status", {
       status: { state: "ready", message: "" },
     }).catch(() => undefined);
@@ -67,18 +142,58 @@ async function applySettings(next: CompanionSettings): Promise<void> {
 
 function applyActivity(activity: CompanionActivity): void {
   renderer?.applyPhase(activity.phase);
-  if (!settings?.bubbleVisible || !bubble || !title || !detail) return;
+  if (
+    !bubble ||
+    !title ||
+    !detail ||
+    !shouldShowCompanionBubble(Boolean(settings?.bubbleVisible), activity)
+  ) {
+    hideBubble();
+    return;
+  }
   title.textContent = activity.title;
   detail.textContent = activity.detail;
   bubble.hidden = false;
+  window.requestAnimationFrame(positionOverlays);
   window.clearTimeout(bubbleTimer);
   bubbleTimer = window.setTimeout(() => {
-    bubble.hidden = true;
+    hideBubble();
   }, activity.phase === "success" || activity.phase === "failed" ? 8000 : 5000);
 }
 
 stage?.addEventListener("pointerdown", (event) => {
-  if (event.button === 0) void appWindow.startDragging();
+  const point = stagePoint(event);
+  if (!point || !renderer?.containsPoint(point.x, point.y)) return;
+  if (!pointerGesture.begin({ pointerId: event.pointerId, button: event.button, ...point })) return;
+  event.preventDefault();
+  stage.setPointerCapture(event.pointerId);
+});
+
+stage?.addEventListener("pointermove", (event) => {
+  const point = stagePoint(event);
+  if (!point) return;
+  hideButton?.classList.toggle("is-near-model", Boolean(renderer?.containsPoint(point.x, point.y)));
+  if (pointerGesture.move({ pointerId: event.pointerId, ...point }) !== "start-drag") return;
+  releasePointer(event.pointerId);
+  void appWindow.startDragging().finally(() => pointerGesture.cancel(event.pointerId));
+});
+
+stage?.addEventListener("pointerup", (event) => {
+  const point = stagePoint(event);
+  const outcome = point
+    ? pointerGesture.end({ pointerId: event.pointerId, ...point })
+    : "none";
+  releasePointer(event.pointerId);
+  if (outcome === "interact") renderer?.playInteraction();
+});
+
+stage?.addEventListener("pointercancel", (event) => {
+  pointerGesture.cancel(event.pointerId);
+  releasePointer(event.pointerId);
+});
+
+stage?.addEventListener("pointerleave", () => {
+  hideButton?.classList.remove("is-near-model");
 });
 
 hideButton?.addEventListener("click", async () => {
@@ -93,6 +208,7 @@ hideButton?.addEventListener("click", async () => {
 });
 
 window.addEventListener("contextmenu", (event) => event.preventDefault());
+window.addEventListener("resize", () => window.requestAnimationFrame(positionOverlays));
 
 await listen<CompanionActivity>("companion:activity", (event) => {
   applyActivity(event.payload);
