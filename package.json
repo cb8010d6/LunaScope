@@ -6,7 +6,6 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:companion-assets": "node --no-warnings --test apps/desktop/src/companion/vendor/asset-url.test.mjs",
     "test:pixi-runtime": "node --no-warnings --test apps/desktop/src/companion/vendor/pixi-runtime.test.mjs",
     "test:tauri-csp": "node --no-warnings --test apps/desktop/src/tauri-csp.test.mjs",
     "test:environment-preflight": "node --no-warnings --experimental-strip-types --test apps/desktop/src/environment-preflight.test.ts",
